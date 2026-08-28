@@ -62,7 +62,7 @@ export function useWebRTCVideo(enabled: boolean): {
     try {
       await pc.setLocalDescription(await pc.createOffer());
       await waitForIceGathering(pc);
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/api/webrtc/offer`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/webrtc/offer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sdp: pc.localDescription?.sdp, type: pc.localDescription?.type }),

@@ -29,7 +29,7 @@ export function PatientDashboard() {
   const activeRegion = snapshot?.ready ? null : manualRegion ?? hoverRegion ?? coach.region;
   const highlightState = activeRegion ? regionState(snapshot, activeRegion) : state;
   const mirrored = process.env.NEXT_PUBLIC_CAMERA_MIRRORED === "true";
-  const reset = async () => { try { await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/api/reset`, { method: "POST" }); } catch { /* status UI already handles offline state */ } };
+  const reset = async () => { try { await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/reset`, { method: "POST" }); } catch { /* status UI already handles offline state */ } };
   return <>
     <PatientHeader connection={stream.connectionState} cvLive={!!snapshot} mock={stream.isMock} onSettings={() => setSettingsOpen(true)} onReset={reset}/>
     <main className="patient-main">

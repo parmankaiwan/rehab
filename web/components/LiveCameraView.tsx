@@ -16,7 +16,7 @@ export const LiveCameraView = memo(function LiveCameraView({ snapshot, unavailab
   const [mjpegFailed, setMjpegFailed] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const webrtc = useWebRTCVideo(transport === "WEBRTC" && !unavailable);
-  const mjpegUrl = process.env.NEXT_PUBLIC_VIDEO_URL ?? "http://localhost:8000/video-feed";
+  const mjpegUrl = process.env.NEXT_PUBLIC_VIDEO_URL ?? "/video-feed";
 
   useEffect(() => {
     if (!mjpegFailed) return;
@@ -41,7 +41,7 @@ export const LiveCameraView = memo(function LiveCameraView({ snapshot, unavailab
       <CameraBodyOverlay landmarks={snapshot?.landmarks} region={snapshot?.ready ? null : activeRegion ?? null} state={highlightState ?? snapshot?.overall_state ?? "GREY"} mirrored={mirrored}/>
       {transport === "MJPEG" && !videoUnavailable && <img key={retryKey} src={`${mjpegUrl}?retry=${retryKey}`} alt="Annotated posture camera stream" onError={() => setMjpegFailed(true)}/>} 
       {transport === "WEBRTC" && !unavailable && webrtc.state !== "CONNECTED" && <div className="video-state"><Radio size={16}/>{webrtc.state === "CONNECTING" ? "VIDEO CONNECTING" : "VIDEO RECONNECTING"}</div>}
-      {videoUnavailable && <div className="camera-placeholder"><div className="camera-symbol"><VideoOff/></div><strong>Video unavailable</strong><span>{unavailable ? "Waiting for FlexMap CV…" : "Reconnecting to the live video transport…"}</span></div>}
+      {videoUnavailable && <div className="camera-placeholder"><div className="camera-symbol"><VideoOff/></div><strong>Video unavailable</strong><span>{unavailable ? "Waiting for FlexMap CVâ€¦" : "Reconnecting to the live video transportâ€¦"}</span></div>}
       {full && snapshot && <div className={`full-overlay state-${snapshot.overall_state.toLowerCase()}`}><strong>{snapshot.ready ? "Ready" : coachPrimary ?? "Adjust position"}</strong></div>}
       {research && <span className="transport-label">{transport} / {transport === "WEBRTC" ? webrtc.state : mjpegFailed ? "UNAVAILABLE" : "STREAMING"}</span>}
     </div>

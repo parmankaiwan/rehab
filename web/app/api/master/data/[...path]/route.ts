@@ -9,8 +9,10 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!verifyMasterSession(jar.get(MASTER_COOKIE)?.value)) return NextResponse.json({ error: "Master authorization required" }, { status: 401 });
   const token = process.env.MASTER_INTERNAL_TOKEN;
   if (!token) return NextResponse.json({ error: "Master data service is not configured" }, { status: 503 });
+  const backendUrl = process.env.FLEXMAP_BACKEND_URL;
+  if (!backendUrl) return NextResponse.json({ error: "Master data service is not configured" }, { status: 503 });
   const { path } = await context.params;
-  const upstream = new URL(`/api/master/${path.join("/")}`, process.env.FLEXMAP_BACKEND_URL || "http://127.0.0.1:8000");
+  const upstream = new URL(`/api/master/${path.join("/")}`, backendUrl);
   upstream.search = request.nextUrl.search;
   const headers = new Headers();
   headers.set("x-flexmap-master-token", token);
