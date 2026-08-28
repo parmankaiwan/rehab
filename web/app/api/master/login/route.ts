@@ -7,7 +7,12 @@ export async function POST(request: NextRequest) {
   const limit = rateLimitStatus(key);
   if (!limit.allowed) return NextResponse.json({ success: false, error: "Too many attempts. Try again later." }, { status: 429, headers: { "Retry-After": String(limit.retryAfter), "Cache-Control": "no-store" } });
   let password: unknown;
-  try { password = (await request.json()).password; } catch { return NextResponse.json({ success: false, error: "Invalid request" }, { status: 400 }); }
+  try {
+    const body: unknown = await request.json();
+    password = typeof body === "object" && body !== null && "password" in body
+      ? (body as { password?: unknown }).password
+      : undefined;
+  } catch { return NextResponse.json({ success: false, error: "Invalid request" }, { status: 400 }); }
   if (typeof password !== "string" || !verifyMasterPassword(password)) {
     recordLoginFailure(key);
     return NextResponse.json({ success: false, error: "Invalid password" }, { status: 401, headers: { "Cache-Control": "no-store" } });
