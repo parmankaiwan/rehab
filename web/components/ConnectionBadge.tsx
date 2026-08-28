@@ -1,0 +1,2 @@
+import { ConnectionState } from "@/types/posture";
+export function ConnectionBadge({ state, mock=false }: { state: ConnectionState; mock?: boolean }) { const label = mock ? "MOCK DATA" : state === "CONNECTED" ? "Connected" : state === "CONNECTING" ? "Connecting…" : state === "ERROR" ? "Connection error" : "Disconnected"; return <span className={`connection connection--${mock ? "mock" : state.toLowerCase()}`}><i aria-hidden="true" />{label}</span>; }

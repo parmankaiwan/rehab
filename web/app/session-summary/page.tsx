@@ -1,0 +1,1 @@
+import{Suspense}from"react";import{PatientSessionSummary}from"@/components/PatientSessionSummary";export default function Page(){return <Suspense><PatientSessionSummary/></Suspense>}

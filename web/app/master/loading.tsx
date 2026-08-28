@@ -1,0 +1,1 @@
+export default function Loading(){return <div className="master-shell"><main className="master-content"><div className="loading-skeleton" aria-label="Loading Master workspace"><i/><i/><i/></div></main></div>}

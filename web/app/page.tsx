@@ -1,0 +1,1 @@
+import{PatientHome}from"@/components/PatientHome";import{patientModules}from"@/lib/patientModules";export default function Page(){return <PatientHome modules={patientModules()}/>}

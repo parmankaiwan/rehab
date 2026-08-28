@@ -1,0 +1,235 @@
+{
+    "schema_version":  "1.0",
+    "modules":  [
+                    {
+                        "id":  "STARTING_POSTURE",
+                        "slug":  "starting_posture",
+                        "display_name":  "Starting Posture",
+                        "description":  "Starting-position and setup posture recordings.",
+                        "enabled":  true,
+                        "display_order":  1,
+                        "labels":  [
+                                       {
+                                           "id":  "acceptable_start",
+                                           "display_name":  "Acceptable Start"
+                                       },
+                                       {
+                                           "id":  "lean_left",
+                                           "display_name":  "Lean Left"
+                                       },
+                                       {
+                                           "id":  "lean_right",
+                                           "display_name":  "Lean Right"
+                                       },
+                                       {
+                                           "id":  "rotated_left",
+                                           "display_name":  "Rotated Left"
+                                       },
+                                       {
+                                           "id":  "rotated_right",
+                                           "display_name":  "Rotated Right"
+                                       },
+                                       {
+                                           "id":  "head_tilt",
+                                           "display_name":  "Head Tilt"
+                                       },
+                                       {
+                                           "id":  "shoulder_elevated",
+                                           "display_name":  "Shoulder Elevated"
+                                       },
+                                       {
+                                           "id":  "trunk_off_center",
+                                           "display_name":  "Trunk Off Center"
+                                       },
+                                       {
+                                           "id":  "tracking_incomplete",
+                                           "display_name":  "Tracking Incomplete"
+                                       }
+                                   ],
+                        "emg_labels":  [
+                                           {
+                                               "id":  "rest_baseline",
+                                               "display_name":  "Rest Baseline"
+                                           },
+                                           {
+                                               "id":  "ready_hold",
+                                               "display_name":  "Ready Hold"
+                                           },
+                                           {
+                                               "id":  "other",
+                                               "display_name":  "Other"
+                                           }
+                                       ],
+                        "patient_enabled":  false,
+                        "requires_cv":  true,
+                        "requires_emg":  false,
+                        "optional_emg":  false
+                    },
+                    {
+                        "id":  "REACHING",
+                        "slug":  "reaching",
+                        "display_name":  "Reaching",
+                        "description":  "Goal-directed upper-limb reaching recordings.",
+                        "enabled":  true,
+                        "display_order":  2,
+                        "labels":  [
+                                       {
+                                           "id":  "reach",
+                                           "display_name":  "Reach"
+                                       },
+                                       {
+                                           "id":  "return",
+                                           "display_name":  "Return"
+                                       },
+                                       {
+                                           "id":  "incomplete_reach",
+                                           "display_name":  "Incomplete Reach"
+                                       },
+                                       {
+                                           "id":  "possible_trunk_compensation",
+                                           "display_name":  "Possible Trunk Compensation"
+                                       },
+                                       {
+                                           "id":  "tracking_incomplete",
+                                           "display_name":  "Tracking Incomplete"
+                                       }
+                                   ],
+                        "emg_labels":  [
+                                           {
+                                               "id":  "rest_baseline",
+                                               "display_name":  "Rest Baseline"
+                                           },
+                                           {
+                                               "id":  "forward_reach",
+                                               "display_name":  "Forward Reach"
+                                           },
+                                           {
+                                               "id":  "target_hold",
+                                               "display_name":  "Target Hold"
+                                           },
+                                           {
+                                               "id":  "return",
+                                               "display_name":  "Return"
+                                           },
+                                           {
+                                               "id":  "full_trial",
+                                               "display_name":  "Full Trial"
+                                           },
+                                           {
+                                               "id":  "other",
+                                               "display_name":  "Other"
+                                           }
+                                       ],
+                        "patient_enabled":  true,
+                        "requires_cv":  true,
+                        "requires_emg":  false,
+                        "optional_emg":  true,
+                        "patient_display_name":  "Reaching",
+                        "patient_description":  "Practice controlled reaching toward a target.",
+                        "patient_icon":  "reach"
+                    },
+                    {
+                        "id":  "ELBOW_EXTENSION",
+                        "slug":  "elbow_extension",
+                        "display_name":  "Elbow Extension",
+                        "description":  "Elbow-extension movement recordings.",
+                        "enabled":  true,
+                        "display_order":  3,
+                        "labels":  [
+                                       {
+                                           "id":  "extension",
+                                           "display_name":  "Extension"
+                                       },
+                                       {
+                                           "id":  "return",
+                                           "display_name":  "Return"
+                                       },
+                                       {
+                                           "id":  "limited_extension",
+                                           "display_name":  "Limited Extension"
+                                       },
+                                       {
+                                           "id":  "tracking_incomplete",
+                                           "display_name":  "Tracking Incomplete"
+                                       }
+                                   ],
+                        "emg_labels":  [
+                                           {
+                                               "id":  "rest_baseline",
+                                               "display_name":  "Rest Baseline"
+                                           },
+                                           {
+                                               "id":  "active_extension",
+                                               "display_name":  "Active Extension"
+                                           },
+                                           {
+                                               "id":  "return",
+                                               "display_name":  "Return"
+                                           },
+                                           {
+                                               "id":  "full_trial",
+                                               "display_name":  "Full Trial"
+                                           },
+                                           {
+                                               "id":  "other",
+                                               "display_name":  "Other"
+                                           }
+                                       ],
+                        "patient_enabled":  true,
+                        "requires_cv":  true,
+                        "requires_emg":  false,
+                        "optional_emg":  true,
+                        "patient_display_name":  "Elbow Extension",
+                        "patient_description":  "Practice gently straightening and returning your arm.",
+                        "patient_icon":  "arm"
+                    },
+                    {
+                        "id":  "TRUNK_CONTROL",
+                        "slug":  "trunk_control",
+                        "display_name":  "Trunk Control",
+                        "description":  "Trunk-position and trunk-movement recordings.",
+                        "enabled":  true,
+                        "display_order":  4,
+                        "labels":  [
+                                       {
+                                           "id":  "centered",
+                                           "display_name":  "Centered"
+                                       },
+                                       {
+                                           "id":  "lean_left",
+                                           "display_name":  "Lean Left"
+                                       },
+                                       {
+                                           "id":  "lean_right",
+                                           "display_name":  "Lean Right"
+                                       },
+                                       {
+                                           "id":  "forward_lean",
+                                           "display_name":  "Forward Lean"
+                                       },
+                                       {
+                                           "id":  "tracking_incomplete",
+                                           "display_name":  "Tracking Incomplete"
+                                       }
+                                   ],
+                        "emg_labels":  [
+                                           {
+                                               "id":  "rest_baseline",
+                                               "display_name":  "Rest Baseline"
+                                           },
+                                           {
+                                               "id":  "trunk_task",
+                                               "display_name":  "Trunk Task"
+                                           },
+                                           {
+                                               "id":  "other",
+                                               "display_name":  "Other"
+                                           }
+                                       ],
+                        "patient_enabled":  false,
+                        "requires_cv":  true,
+                        "requires_emg":  false,
+                        "optional_emg":  false
+                    }
+                ]
+}

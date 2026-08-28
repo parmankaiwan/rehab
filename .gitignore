@@ -1,0 +1,31 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+web/node_modules/
+web/.next/
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+!web/.env.local.example
+web/.master-token
+
+# Generated frontend state
+web/tsconfig.tsbuildinfo
+web/out/
+
+# Runtime logs and process output
+*.log
+
+# Private research artifacts and local persistence
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

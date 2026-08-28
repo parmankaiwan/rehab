@@ -1,0 +1,1 @@
+import {CvModuleRoute} from "@/components/master/CvModuleRoute";import {MasterFrame} from "@/components/master/MasterFrame";import {protectedMaster} from "@/lib/masterPage";export const dynamic="force-dynamic";export default async function Page({params}:{params:Promise<{slug:string}>}){return protectedMaster(<MasterFrame><CvModuleRoute slug={(await params).slug}/></MasterFrame>)}

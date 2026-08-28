@@ -1,0 +1,8 @@
+{
+  "STARTING_POSTURE": ["acceptable_start", "lean_left", "lean_right", "rotated_left", "rotated_right", "head_tilt", "shoulder_elevated", "trunk_off_center", "tracking_incomplete"],
+  "REACH": ["reach_attempt", "target_reached", "return_to_start", "tracking_interrupted"],
+  "ELBOW_EXTENSION": ["extension_attempt", "limited_extension", "tracking_interrupted"],
+  "TRUNK_POSITION": ["centered", "shift_left", "shift_right", "lean_forward", "tracking_interrupted"],
+  "TRACKING_FAILURE": ["partial_occlusion", "arm_out_of_frame", "hips_out_of_frame", "pose_lost"],
+  "OTHER": ["unclassified_research_sample"]
+}
