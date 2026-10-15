@@ -156,6 +156,11 @@ Create a Render Blueprint from this repository and enter `MASTER_PASSWORD` when
 Render requests it. Render generates the session, master-service, and CV-engine
 tokens; they are not stored in Git.
 
+The Next.js service reaches the API over its public HTTPS endpoint. Render's
+free web services cannot receive private-network traffic, so replacing
+`FLEXMAP_BACKEND_URL` with an internal hostname will make Master API requests
+return 502 responses.
+
 Camera and EMG hardware remain attached to the local acquisition computer. To
 send the existing CV output to Render, copy the generated `FLEXMAP_ENGINE_TOKEN`
 from the API service into the local CV process and start the existing engine:
