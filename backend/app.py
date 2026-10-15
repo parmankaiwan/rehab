@@ -22,7 +22,8 @@ from .schemas import EngineStatus, PostureSnapshot
 from .video_store import raw_video_store, video_store
 from .webrtc_video import RTCAnswer, RTCOffer, answer_offer, close_peers
 from .master_dataset_api import router as master_dataset_router
-from .emg.api import router as emg_router, ws_router as emg_ws_router
+from .emg.api import router as emg_router, ws_router as emg_ws_router, service as emg_service
+from .emg.schemas import RemoteEmgBatch
 from .sessions import router as sessions_router
 from .patient_sessions import router as patient_sessions_router
 from .acquisition import router as acquisition_router
@@ -108,6 +109,15 @@ def receive_engine_status(status: dict[str, bool | None], request: Request) -> d
     return {"success": True}
 
 
+@app.post("/api/engine/emg/batch", include_in_schema=False)
+def receive_engine_emg_batch(batch: RemoteEmgBatch, request: Request) -> dict:
+    require_engine(request)
+    try:
+        return emg_service.ingest_remote_batch(batch)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/webrtc/offer", response_model=RTCAnswer)
 async def webrtc_offer(offer: RTCOffer) -> RTCAnswer:
     if not video_store.is_fresh():
@@ -123,7 +133,6 @@ def video_metrics() -> dict:
 @app.on_event("shutdown")
 async def shutdown_webrtc() -> None:
     await close_peers()
-    from .emg.api import service as emg_service
     emg_service.disconnect()
 
 @app.get("/video-feed")

@@ -59,6 +59,15 @@ def test_engine_ingestion_requires_configured_token(monkeypatch):
     assert response.status_code == 200
 
 
+def test_remote_emg_ingestion_requires_token_and_accepts_samples(monkeypatch):
+    monkeypatch.setenv("FLEXMAP_ENGINE_TOKEN", "engine-test-token")
+    payload = {"source_port": "COM9", "channel_count": 1, "samples": [{"values": [2048.0], "device_sequence_id": 1}]}
+    assert client.post("/api/engine/emg/batch", json=payload).status_code == 403
+    response = client.post("/api/engine/emg/batch", json=payload, headers={"x-flexmap-engine-token": "engine-test-token"})
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+
+
 def test_mjpeg_serializes_latest_frame():
     import asyncio
 

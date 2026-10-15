@@ -8,6 +8,7 @@ web/.next/
 .env
 .env.*
 !.env.example
+!.env.agent.example
 !web/.env.local.example
 web/.master-token
 

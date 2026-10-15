@@ -3,7 +3,7 @@ import csv, hashlib, json, math, queue, random, secrets, shutil, sqlite3, thread
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from .schemas import BaselineRequest, ConnectRequest, RecordingRequest
+from .schemas import BaselineRequest, ConnectRequest, RecordingRequest, RemoteEmgBatch
 from .signal_processing import EmgProcessingConfig, EmgProcessingPipeline
 from .signal_quality import EmgSignalQualityMonitor
 from .hardware_profiles import HardwareProfileStore, utcnow
@@ -68,6 +68,7 @@ class EmgService:
         self.selected_device = None
         self.firmware = FirmwareService()
         self.serial_manager = SerialManager(self._add, self._serial_state)
+        self.remote_source = False
 
     def _db(self):
         db = sqlite3.connect(self.settings.database_path, timeout=10)
@@ -520,6 +521,10 @@ class EmgService:
 
     def disconnect(self):
         self.stop_event.set()
+        if self.remote_source:
+            self.remote_source = False
+            self.connection_state = "DISCONNECTED"
+            return self.board_status()
         if self.config and self.config.transport_type == "USB_SERIAL":
             self.serial_manager.stop()
             if (
@@ -598,7 +603,7 @@ class EmgService:
         result = self.status()
         serial_status = (
             self.serial_manager.status()
-            if self.config and self.config.transport_type == "USB_SERIAL"
+            if self.config and self.config.transport_type == "USB_SERIAL" and not self.remote_source
             else None
         )
         if serial_status:
@@ -636,6 +641,25 @@ class EmgService:
             }
         )
         return result
+
+    def ingest_remote_batch(self, batch: RemoteEmgBatch):
+        """Accept samples acquired by the trusted local hardware agent."""
+        with self.lock:
+            if not self.remote_source:
+                if self.connection_state not in ("DISCONNECTED", "ERROR", "STALE"):
+                    raise RuntimeError("ANOTHER EMG SOURCE IS ACTIVE")
+                self.stop_event.clear()
+                self.samples.clear(); self.processed_samples.clear(); self.processing.reset(); self.signal_quality.reset()
+                self.sequence = 0; self.started_ns = time.perf_counter_ns()
+                self.config = ConnectRequest(transport_type="USB_SERIAL", serial_port=batch.source_port, baud_rate=batch.baud_rate, protocol=batch.protocol, expected_sample_rate_hz=batch.expected_sample_rate_hz, channels=[{"internal_id": f"channel_{index + 1}", "display_name": f"Channel {index + 1}", "body_side": "UNKNOWN"} for index in range(batch.channel_count)])
+                self.selected_device = {**batch.device, "port": batch.source_port, "remote_agent": True}
+                self.remote_source = True
+                self.processing_worker = threading.Thread(target=self._processing_loop, name="flexmap-emg-remote-processing", daemon=True)
+                self.processing_worker.start()
+            self.connection_state = "STREAMING"; self.connection_error = None; self.verification = "DATA_STREAM_VERIFIED"
+        for sample in batch.samples:
+            self._add(sample.values, sample.device_sequence_id, sample.device_timestamp, sample.valid)
+        return {"success": True, "accepted": len(batch.samples), "latest_sequence_id": self.sequence}
 
     def board_test(self):
         status = self.board_status()
@@ -773,6 +797,8 @@ class EmgService:
 
     def status(self):
         now = time.perf_counter_ns()
+        if self.remote_source and self.latest_ns and (now - self.latest_ns) / 1e9 > 2.5:
+            self.connection_state = "STALE"
         with self.lock:
             first_sample = self.samples[0] if len(self.samples) >= 2 else None
             last_sample = self.samples[-1] if len(self.samples) >= 2 else None

@@ -15,6 +15,10 @@ class RecordingRequest(BaseModel):
  def consent(self):
   if not self.consent_recorded:raise ValueError("Documented research recording consent is required")
   return self
+class RemoteEmgSample(BaseModel):
+ values:list[float]=Field(min_length=1,max_length=4);device_sequence_id:Optional[int]=None;device_timestamp:Optional[float]=None;valid:bool=True
+class RemoteEmgBatch(BaseModel):
+ source_port:str=Field(min_length=1,max_length=100);baud_rate:int=Field(default=115200,ge=1200,le=3000000);protocol:Literal["VALUE_ONLY","TIMESTAMP_VALUE","CSV_CHANNELS","TIMESTAMP_CSV_CHANNELS","SEQUENCE_TIMESTAMP_CSV"]="CSV_CHANNELS";expected_sample_rate_hz:float=Field(default=1000,gt=0,le=10000);channel_count:int=Field(default=1,ge=1,le=4);device:dict=Field(default_factory=dict);samples:list[RemoteEmgSample]=Field(default_factory=list,max_length=500)
 class BaselineRequest(BaseModel):
  rehab_type:str;subject_id:str=Field(pattern=r"^[A-Za-z0-9_-]+$");duration_seconds:float=Field(default=5,ge=1,le=60);session_id:Optional[str]=None;collection_id:Optional[str]=None;protocol_id:Optional[str]=None;protocol_version:Optional[int]=Field(default=None,ge=1);baseline_group_id:Optional[str]=None;baseline_number:Optional[int]=Field(default=None,ge=1);hardware_profile_id:Optional[str]=None;hardware_profile_version:Optional[int]=Field(default=None,ge=1);channel_map_snapshot:Optional[dict]=None;notes:str=Field(default="",max_length=1000)
 class RecordingMarkerRequest(BaseModel):

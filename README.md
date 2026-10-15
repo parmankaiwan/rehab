@@ -178,3 +178,22 @@ has an ephemeral filesystem and can sleep while idle. Configure the private
 Supabase vault mirror before using the deployed system for persistent research
 records; until then, treat the Render deployment as a live/demo environment and
 do not collect patient recordings into it.
+
+### Automatic local CV and EMG
+
+The hosted website cannot open Windows cameras or COM ports directly. The local
+hardware agent keeps those devices connected so the CV and EMG Live sections
+work as soon as they are opened.
+
+1. Copy `.env.agent.example` to `.env.agent`.
+2. In Render, open the API service's **Environment** page, copy
+   `FLEXMAP_ENGINE_TOKEN`, and place it in `.env.agent`. This private file is
+   ignored by Git.
+3. Confirm the EMG port (normally `COM9`) and the one-channel settings.
+4. Run `install-flexmap-autostart.ps1` once from PowerShell.
+
+The installer creates a per-user Windows logon task and starts the agent
+immediately. The agent launches the existing CV engine, automatically selects
+the configured or first USB serial EMG device, reconnects after interruptions,
+and publishes to the authenticated Render ingestion endpoints. It does not
+start a recording or save a Dataset Vault entry.
