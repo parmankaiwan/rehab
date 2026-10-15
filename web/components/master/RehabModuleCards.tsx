@@ -1,1 +1,86 @@
-"use client";import Link from"next/link";import{Activity,Folder,Move3d,PersonStanding}from"lucide-react";import{useEffect,useState}from"react";import type{RehabModule}from"@/types/dataset";const icons=[PersonStanding,Move3d,Activity,Folder];export function RehabModuleCards({destination}:{destination:"collection"|"dataset"}){const[modules,setModules]=useState<RehabModule[]>([]),[emg,setEmg]=useState<Record<string,number>>({});useEffect(()=>{fetch("/api/master/data/rehab-modules").then(r=>r.ok?r.json():[]).then(setModules);if(destination==="dataset")fetch("/api/master/data/emg/rehab-modules").then(r=>r.ok?r.json():[]).then((rows:{id:string;emg_stats?:{total_recordings:number}}[])=>setEmg(Object.fromEntries(rows.map(x=>[x.id,x.emg_stats?.total_recordings||0]))))},[destination]);return <div className="module-grid">{modules.map((module,index)=>{const Icon=icons[index%icons.length],unassigned=module.id==="UNASSIGNED",href=destination==="collection"?`/master/cv-data/${module.slug}`:`/master/dataset/${module.slug}`;if(destination==="collection"&&unassigned)return null;return <article className={`module-card ${!module.enabled&&!unassigned?"archived":""}`} key={module.id}><Icon/><div><span className="eyebrow">{unassigned?"Legacy review":module.enabled?"Rehab dataset":"Archived"}</span><h2>{module.name}</h2><p>{module.description}</p><dl><div><dt>{destination==="dataset"?"Computer Vision":"Recordings"}</dt><dd>{module.stats.total_samples}</dd></div><div><dt>{destination==="dataset"?"EMG":"Training eligible"}</dt><dd>{destination==="dataset"?(emg[module.id]||0):module.stats.training_eligible}</dd></div></dl>{module.enabled||destination==="dataset"?<Link href={href}>{destination==="collection"?(module.stats.total_samples?"Open collection":"Collect first sample"):unassigned?"Review unassigned":"Open dataset"} →</Link>:<span>Collection disabled</span>}</div></article>})}</div>}
+"use client";
+
+import Link from "next/link";
+import { Activity, ArrowRight, Database, Folder, Move3d, PersonStanding, Play, Radio, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import type { RehabModule } from "@/types/dataset";
+
+const icons = [PersonStanding, Move3d, Activity, Folder];
+
+export function RehabModuleCards({ destination }: { destination: "collection" | "dataset" }) {
+  const [modules, setModules] = useState<RehabModule[]>([]);
+  const [emg, setEmg] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const moduleResponse = await fetch("/api/master/data/rehab-modules", { cache: "no-store" });
+      if (!moduleResponse.ok) throw new Error("Posture datasets are temporarily unavailable.");
+      setModules(await moduleResponse.json());
+
+      if (destination === "dataset") {
+        const emgResponse = await fetch("/api/master/data/emg/rehab-modules", { cache: "no-store" });
+        if (emgResponse.ok) {
+          const rows: { id: string; emg_stats?: { total_recordings: number } }[] = await emgResponse.json();
+          setEmg(Object.fromEntries(rows.map((row) => [row.id, row.emg_stats?.total_recordings || 0])));
+        }
+      }
+    } catch (cause) {
+      setModules([]);
+      setError(cause instanceof Error ? cause.message : "Posture datasets could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [destination]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (loading) return <div className="module-loading" role="status"><i/><i/><span>Loading posture datasets…</span></div>;
+  if (error) return <div className="module-load-error" role="alert"><div><strong>Could not load posture datasets</strong><span>{error}</span></div><button onClick={load}><RefreshCw/>Retry</button></div>;
+  if (!modules.length) return <div className="master-empty">No posture datasets are configured.</div>;
+
+  return <div className="module-grid">
+    {modules.map((module, index) => {
+      const Icon = icons[index % icons.length];
+      const unassigned = module.id === "UNASSIGNED";
+      if (destination === "collection" && unassigned) return null;
+      return <article className={`module-card module-card-with-actions ${!module.enabled && !unassigned ? "archived" : ""}`} key={module.id}>
+        <Icon/>
+        <div className="module-card-content">
+          <span className="eyebrow">{unassigned ? "Legacy review" : module.enabled ? "Rehab dataset" : "Archived"}</span>
+          <h2>{module.name}</h2>
+          <p>{module.description}</p>
+          <dl>
+            <div><dt>{destination === "dataset" ? "Computer Vision" : "Recordings"}</dt><dd>{module.stats.total_samples}</dd></div>
+            <div><dt>{destination === "dataset" ? "EMG" : "Training eligible"}</dt><dd>{destination === "dataset" ? emg[module.id] || 0 : module.stats.training_eligible}</dd></div>
+          </dl>
+          <ModuleActions module={module} destination={destination} unassigned={unassigned}/>
+        </div>
+      </article>;
+    })}
+  </div>;
+}
+
+function ModuleActions({ module, destination, unassigned }: { module: RehabModule; destination: "collection" | "dataset"; unassigned: boolean }) {
+  const collectionHref = `/master/cv-data/${module.slug}`;
+  const datasetHref = `/master/dataset/${module.slug}`;
+  return <div className="module-action-box" aria-label={`${module.name} actions`}>
+    <span>Actions</span>
+    <div>
+      {destination === "collection" && module.enabled && <Link className="module-action-primary" href={collectionHref}>
+        <Play/>{module.stats.total_samples ? "Continue collection" : "Collect first sample"}<ArrowRight/>
+      </Link>}
+      {destination === "dataset" && <Link className="module-action-primary" href={datasetHref}>
+        <Database/>{unassigned ? "Review unassigned" : "Open dataset"}<ArrowRight/>
+      </Link>}
+      {!unassigned && <Link href={destination === "collection" ? datasetHref : collectionHref}>
+        {destination === "collection" ? <Database/> : <Play/>}{destination === "collection" ? "Review recordings" : "Collect posture data"}
+      </Link>}
+      {!unassigned && module.enabled && <Link href="/master/live/cv"><Radio/>Open live posture</Link>}
+      {!module.enabled && destination === "collection" && <small>Collection disabled for this archived module.</small>}
+    </div>
+  </div>;
+}
