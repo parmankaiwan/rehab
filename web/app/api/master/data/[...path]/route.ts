@@ -9,9 +9,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!verifyMasterSession(jar.get(MASTER_COOKIE)?.value)) return NextResponse.json({ error: "Master authorization required" }, { status: 401 });
   const token = process.env.MASTER_INTERNAL_TOKEN;
   if (!token) return NextResponse.json({ error: "Master data service is not configured" }, { status: 503 });
+  // Render free services cannot receive private-network traffic. Keep the
+  // production public endpoint as a code fallback so an old Blueprint-only
+  // FLEXMAP_BACKEND_HOST value can never break the Master proxy with 502s.
   const backendUrl = process.env.FLEXMAP_BACKEND_URL
-    ?? (process.env.FLEXMAP_BACKEND_HOST ? `http://${process.env.FLEXMAP_BACKEND_HOST}` : undefined)
-    ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined);
+    ?? (process.env.NODE_ENV === "production"
+      ? "https://flexmap-rehab-api-parmankaiwan.onrender.com"
+      : "http://127.0.0.1:8000");
   if (!backendUrl) return NextResponse.json({ error: "Master data service is not configured" }, { status: 503 });
   const { path } = await context.params;
   const upstream = new URL(`/api/master/${path.join("/")}`, backendUrl);
