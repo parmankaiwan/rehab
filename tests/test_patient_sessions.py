@@ -17,6 +17,10 @@ def test_create_and_active_recovery(sessions):
     assert sessions.active()["session_id"]==item["session_id"]
     assert item["completed_repetitions"] is None
 
+def test_records_browser_pose_source_without_changing_default(sessions):
+    browser = PatientSessionCreate(exercise_id="reaching", rehab_type="REACHING", source="BROWSER_MEDIAPIPE")
+    assert sessions.create(browser)["source"] == "BROWSER_MEDIAPIPE"
+
 def test_prevents_duplicate_active_session(sessions):
     first=sessions.create(request())
     with pytest.raises(RuntimeError,match=first["session_id"]): sessions.create(request())

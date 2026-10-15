@@ -1,7 +1,7 @@
 export type PostureState = "GREEN" | "ORANGE" | "RED" | "GREY";
 export type ConnectionState = "CONNECTED" | "CONNECTING" | "DISCONNECTED" | "ERROR";
 export interface PostureComponent { state: PostureState; value?: number | null; units?: string | null; confidence?: number | null; display_name?: string | null; }
-export interface DisplayLandmark { x: number; y: number; valid: boolean; }
+export interface DisplayLandmark { x: number; y: number; z?: number; visibility?: number; presence?: number; valid: boolean; }
 export interface CvTimingStats {mean_ms?:number|null;median_ms?:number|null;p95_ms?:number|null;p99_ms?:number|null;max_ms?:number|null;samples?:number}
 export interface CvPoseScheduler {pose_submitted?:number;pose_results?:number;pose_skipped_busy?:number;pose_submission_hz?:number;pose_result_hz?:number;pose_latency_mean_ms?:number|null;pose_latency_p95_ms?:number|null;buffer_depth?:number;latest_capture_frame_id?:number|null}
 export interface CvPerformance {pose_scheduler?:CvPoseScheduler;pose_result_age?:CvTimingStats;quality_and_exercise_analysis?:CvTimingStats;drawing?:CvTimingStats;bridge_publish_enqueue?:CvTimingStats}

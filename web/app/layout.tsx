@@ -13,6 +13,7 @@ import "./emg-collection.css";
 import "./emg-validation.css";
 import "./acquisition-countdown.css";
 import "./vault-actions.css";
+import "./browser-pose.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-body" });
 const manrope = Manrope({ subsets: ["latin"], variable: "--font-display" });
 export const metadata: Metadata = {

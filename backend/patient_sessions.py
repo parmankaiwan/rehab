@@ -25,6 +25,7 @@ class PatientSessionCreate(BaseModel):
     exercise_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z][a-z0-9_]{1,63}$")
     rehab_type: str = Field(min_length=1, max_length=64)
     affected_side: Literal["LEFT", "RIGHT", "UNKNOWN", "N/A"] | None = None
+    source: Literal["FLEXMAP_CV", "BROWSER_MEDIAPIPE"] = "FLEXMAP_CV"
 
 
 class PatientSessionStore:
@@ -96,8 +97,8 @@ class PatientSessionStore:
             session_id = self._new_id(db); now = utc_now().isoformat()
             snapshot = posture_store.latest(); ready = bool(snapshot and snapshot.ready)
             tracking = snapshot.tracking_quality if snapshot else "UNAVAILABLE"
-            db.execute("INSERT INTO patient_exercise_sessions(session_id,exercise_id,rehab_type,affected_side,created_at,status,ready,tracking_state) VALUES(?,?,?,?,?,?,?,?)",
-                       (session_id, request.exercise_id, module.id, request.affected_side, now, "READY" if ready else "SETUP", int(ready), tracking))
+            db.execute("INSERT INTO patient_exercise_sessions(session_id,exercise_id,rehab_type,affected_side,created_at,status,ready,tracking_state,source) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (session_id, request.exercise_id, module.id, request.affected_side, now, "READY" if ready else "SETUP", int(ready), tracking, request.source))
         return self.get(session_id)  # type: ignore[return-value]
 
     def _transition(self, session_id: str, action: str) -> dict:
