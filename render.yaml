@@ -1,0 +1,61 @@
+services:
+  - type: web
+    name: flexmap-rehab-api-parmankaiwan
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: FLEXMAP_CORS_ORIGINS
+        value: https://flexmap-rehab-web-parmankaiwan.onrender.com
+      - key: FLEXMAP_MASTER_INTERNAL_TOKEN
+        generateValue: true
+      - key: FLEXMAP_ENGINE_TOKEN
+        generateValue: true
+      - key: FLEXMAP_SUPABASE_SYNC_ENABLED
+        value: "false"
+
+  - type: web
+    name: flexmap-rehab-web-parmankaiwan
+    runtime: node
+    plan: free
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: MASTER_PASSWORD
+        sync: false
+      - key: MASTER_SESSION_SECRET
+        generateValue: true
+      - key: MASTER_INTERNAL_TOKEN
+        fromService:
+          type: web
+          name: flexmap-rehab-api-parmankaiwan
+          envVarKey: FLEXMAP_MASTER_INTERNAL_TOKEN
+      - key: FLEXMAP_BACKEND_HOST
+        fromService:
+          type: web
+          name: flexmap-rehab-api-parmankaiwan
+          property: host
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: https://flexmap-rehab-api-parmankaiwan.onrender.com
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://flexmap-rehab-api-parmankaiwan.onrender.com/ws/posture
+      - key: NEXT_PUBLIC_EMG_WS_URL
+        value: wss://flexmap-rehab-api-parmankaiwan.onrender.com
+      - key: NEXT_PUBLIC_VIDEO_URL
+        value: https://flexmap-rehab-api-parmankaiwan.onrender.com/video-feed
+      - key: NEXT_PUBLIC_VIDEO_TRANSPORT
+        value: MJPEG
+      - key: NEXT_PUBLIC_USE_MOCK_POSTURE
+        value: "false"
+      - key: NEXT_PUBLIC_STALE_AFTER_MS
+        value: "5000"

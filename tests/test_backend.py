@@ -47,6 +47,18 @@ def test_engine_snapshot_and_frame_ingestion():
     assert video_store.latest().jpeg == jpeg
 
 
+def test_engine_ingestion_requires_configured_token(monkeypatch):
+    monkeypatch.setenv("FLEXMAP_ENGINE_TOKEN", "engine-test-token")
+    payload = sample().model_dump(mode="json")
+    assert client.post("/api/engine/snapshot", json=payload).status_code == 403
+    response = client.post(
+        "/api/engine/snapshot",
+        json=payload,
+        headers={"x-flexmap-engine-token": "engine-test-token"},
+    )
+    assert response.status_code == 200
+
+
 def test_mjpeg_serializes_latest_frame():
     import asyncio
 

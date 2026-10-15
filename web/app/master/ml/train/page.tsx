@@ -1,0 +1,1 @@
+import{MasterFrame}from"@/components/master/MasterFrame";import{MlTrainingStudio}from"@/components/master/MlTrainingStudio";import{protectedMaster}from"@/lib/masterPage";export const dynamic="force-dynamic";export default async function Page(){return protectedMaster(<MasterFrame><MlTrainingStudio/></MasterFrame>)}

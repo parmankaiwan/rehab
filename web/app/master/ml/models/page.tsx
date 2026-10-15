@@ -1,0 +1,1 @@
+import{MasterFrame}from"@/components/master/MasterFrame";import{ModelRegistry}from"@/components/master/ModelRegistry";import{protectedMaster}from"@/lib/masterPage";export const dynamic="force-dynamic";export default async function Page(){return protectedMaster(<MasterFrame><ModelRegistry/></MasterFrame>)}

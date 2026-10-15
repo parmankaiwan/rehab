@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    # Environment variables still work without python-dotenv.
+    pass
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +25,8 @@ from .master_dataset_api import router as master_dataset_router
 from .emg.api import router as emg_router, ws_router as emg_ws_router
 from .sessions import router as sessions_router
 from .patient_sessions import router as patient_sessions_router
+from .acquisition import router as acquisition_router
+from .ml import router as ml_router
 
 app = FastAPI(title="FlexMap Posture Bridge", version="1.0.0")
 origins = [value.strip() for value in os.getenv("FLEXMAP_CORS_ORIGINS", "http://localhost:3000").split(",") if value.strip()]
@@ -24,6 +36,16 @@ app.include_router(emg_router)
 app.include_router(emg_ws_router)
 app.include_router(sessions_router)
 app.include_router(patient_sessions_router)
+app.include_router(acquisition_router)
+app.include_router(ml_router)
+
+
+def require_engine(request: Request) -> None:
+    """Authenticate CV engine writes when a deployment token is configured."""
+    expected = os.getenv("FLEXMAP_ENGINE_TOKEN", "")
+    supplied = request.headers.get("x-flexmap-engine-token", "")
+    if expected and not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="CV engine authorization required")
 
 
 @app.get("/health")
@@ -43,13 +65,15 @@ def reset() -> dict[str, bool]:
 
 
 @app.post("/api/engine/snapshot", include_in_schema=False)
-def receive_engine_snapshot(snapshot: PostureSnapshot) -> dict[str, bool | int]:
+def receive_engine_snapshot(snapshot: PostureSnapshot, request: Request) -> dict[str, bool | int]:
+    require_engine(request)
     store.update(snapshot)
     return {"success": True, "reset_generation": store.reset_generation}
 
 
 @app.post("/api/engine/frame", include_in_schema=False)
 async def receive_engine_frame(request: Request) -> dict[str, bool]:
+    require_engine(request)
     frame = await request.body()
     if len(frame) < 4 or len(frame) > 2_000_000 or not frame.startswith(bytes((255, 216))):
         raise HTTPException(status_code=400, detail="Invalid JPEG frame")
@@ -65,6 +89,7 @@ async def receive_engine_frame(request: Request) -> dict[str, bool]:
 
 @app.post("/api/engine/raw-frame", include_in_schema=False)
 async def receive_engine_raw_frame(request: Request) -> dict[str, bool]:
+    require_engine(request)
     frame = await request.body()
     if len(frame) < 4 or len(frame) > 2_000_000 or not frame.startswith(bytes((255, 216))):
         raise HTTPException(status_code=400, detail="Invalid JPEG frame")
@@ -77,7 +102,8 @@ async def receive_engine_raw_frame(request: Request) -> dict[str, bool]:
     return {"success": True}
 
 @app.post("/api/engine/status", include_in_schema=False)
-def receive_engine_status(status: dict[str, bool | None]) -> dict[str, bool]:
+def receive_engine_status(status: dict[str, bool | None], request: Request) -> dict[str, bool]:
+    require_engine(request)
     store.set_engine_status(**status)
     return {"success": True}
 
@@ -129,4 +155,3 @@ async def posture_socket(websocket: WebSocket) -> None:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.app:app", host="127.0.0.1", port=8000, reload=False, access_log=False)
-

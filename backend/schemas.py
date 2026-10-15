@@ -49,6 +49,8 @@ class PostureSnapshot(BaseModel):
     feedback: list[str] = Field(default_factory=list, max_length=2)
     confidence: Optional[float] = None
     fps: Optional[float] = None
+    # Existing exercise-engine output forwarded by the CV bridge.
+    exercise_snapshot: Optional[dict] = None
 
 
 class EngineStatus(BaseModel):
@@ -58,4 +60,3 @@ class EngineStatus(BaseModel):
     camera: Optional[bool] = None
     websocket_clients: int
     last_update: Optional[float] = None
-

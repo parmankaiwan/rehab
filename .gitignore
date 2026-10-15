@@ -17,6 +17,14 @@ web/out/
 web/.open-next/
 web/.wrangler/
 
+# ESP firmware: private device images and generated build output
+backend/emg/firmware_backend/backups/
+backend/emg/firmware_backend/.pio/
+backend/emg/firmware_backend/build/
+backend/emg/firmware_backend/*.bin
+backend/emg/firmware_backend/*.elf
+backend/emg/firmware_backend/*.map
+
 # Runtime logs and process output
 *.log
 

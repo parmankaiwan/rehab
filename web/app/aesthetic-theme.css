@@ -1,0 +1,78 @@
+/* FlexMap mineral blue + sea-glass finish. Loaded last on purpose. */
+body{
+  background:
+    radial-gradient(circle at 88% -10%,#dfe9e5 0,transparent 30rem),
+    linear-gradient(180deg,#f7f5f0 0,var(--color-bg) 28rem);
+  accent-color:var(--color-brand);
+}
+
+::selection{background:#b9d9d2;color:#152832}
+
+.header{
+  background:rgba(255,254,250,.9);
+  border-bottom-color:#d6ddda;
+  box-shadow:inset 0 1px 0 #fff;
+}
+
+.header .brand-mark{
+  background:linear-gradient(145deg,#315f7d,#24475f);
+  box-shadow:0 8px 20px #284f6930;
+}
+
+.header .brand-mark i{background:#9bd2c5}
+.text-button,.icon-button,.connection{background:rgba(255,254,250,.88)}
+
+.research-shell{background:transparent}
+.research-shell .master-header{
+  background:rgba(255,254,250,.92);
+  backdrop-filter:blur(16px);
+}
+
+.research-shell .master-card,
+.research-shell .table-wrap,
+.research-shell .module-card,
+.overview-health,
+.overview-actions{
+  background:var(--color-surface);
+  border-color:var(--color-border);
+}
+
+.research-shell .master-content h1,
+.patient-hero h1,
+.setup-title h1,
+.exercise-title h1{color:#193342}
+
+.research-shell .eyebrow,.patient-hero .eyebrow{color:var(--color-brand)}
+
+.research-shell .primary,.overview-primary{
+  background:linear-gradient(135deg,var(--color-brand),#3d728d);
+  box-shadow:0 10px 25px #315f7d2c;
+}
+
+.research-shell .primary:hover,.overview-primary:hover{
+  background:linear-gradient(135deg,var(--color-brand-hover),#315f7d);
+}
+
+.research-shell .table-wrap th{background:#e9efef;color:#4f626b}
+.research-shell .table-wrap tbody tr:hover{background:#f1f5f3}
+
+.patient-card,.patient-status,.patient-guidance,.compact-components,
+.camera-card,.status-card,.guidance,.components-card,.debug-panel{
+  background:rgba(255,254,250,.94);
+  border-color:var(--color-border);
+  box-shadow:var(--shadow-sm);
+}
+
+.camera-placeholder{background:radial-gradient(circle at 50% 42%,#fbfcf9,#e5ebe8)}
+.progress{background:#e1e6e4}
+.progress i{background:linear-gradient(90deg,var(--color-brand),var(--color-accent))}
+
+.emg-scope,.research-shell .emg-canvas{background:#101b25;border-color:#2b4250}
+.emg-channel-stat-grid{background:#273b47}
+.emg-channel-stat-grid>div{background:#14232d;color:#e8f0f2}
+.emg-chart-overlay{background:#101b25e8}
+.emg-drawer-backdrop{background:#101c266e}
+
+a{transition:color .18s ease,background-color .18s ease,border-color .18s ease,box-shadow .18s ease}
+
+@media(prefers-reduced-motion:reduce){a{transition:none}}

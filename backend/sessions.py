@@ -7,9 +7,9 @@ from .dataset_config import dataset_settings
 from .master_dataset_api import require_master, vault
 from .emg.api import service as emg_service
 class SessionCreate(BaseModel):
- subject_id:str=Field(pattern=r"^[A-Za-z0-9_-]+$",min_length=1,max_length=64);rehab_type:str;affected_side:str=Field(pattern=r"^(LEFT|RIGHT|UNKNOWN|N/A)$");protocol_id:str|None=Field(default=None,max_length=80);notes:str=Field(default="",max_length=2000)
+ subject_id:str=Field(pattern=r"^[A-Za-z0-9_-]+$",min_length=1,max_length=64);rehab_type:str;affected_side:str=Field(pattern=r"^(LEFT|RIGHT|UNKNOWN|N/A)$");study_id:str|None=Field(default=None,max_length=80);protocol_id:str|None=Field(default=None,max_length=80);protocol_version:int|None=Field(default=None,ge=1);notes:str=Field(default="",max_length=2000)
 class SessionUpdate(BaseModel):
- status:str|None=Field(default=None,pattern=r"^(PLANNED|ACTIVE|COMPLETE|ARCHIVED)$");notes:str|None=Field(default=None,max_length=2000)
+ status:str|None=Field(default=None,pattern=r"^(PLANNED|ACTIVE|PAUSED|COMPLETE|ABORTED|ARCHIVED)$");notes:str|None=Field(default=None,max_length=2000)
 class SessionStore:
  def __init__(self):self.path=dataset_settings().root/"research_sessions.json";self.lock=threading.RLock()
  def _read(self):

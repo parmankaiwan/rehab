@@ -121,3 +121,55 @@ $env:NEXT_PUBLIC_VIDEO_TRANSPORT="MJPEG"
 ```
 
 Research Mode also provides live WebRTC/MJPEG buttons plus CV FPS, estimated pose/hand rates, frame receive FPS, JPEG encode time, source/backend/data age, frame sequence, peer count, and effective queue depth. The effective video queue depth is never greater than one.
+
+## Master Live Sensors
+
+Authenticated Master Mode provides non-recording viewers at:
+
+- `/master/live` - sensor overview
+- `/master/live/cv` - existing CV camera, posture telemetry, Ready state, and measurements
+- `/master/live/emg` - existing EMG acquisition source, bounded waveform, processing representations, and signal freshness
+
+Live View displays current sensor data only. Opening a Live page does not create a research session, label, recording row, manifest, video, baseline, or Dataset artifact. CV Live does not open a camera or create a pose engine; `CV part/main.py` remains the only camera and MediaPipe owner. EMG Live does not open a serial port itself; the integrated backend EMG service remains the only acquisition owner.
+
+Data Collection is separate. The CV Data and EMG Data routes require explicit research metadata and an explicit recording action before saving Dataset artifacts.
+
+## Supabase Dataset Vault mirror
+
+The canonical local SQLite database and recording folders remain the acquisition source of truth. An optional server-only Supabase mirror can copy both CV and EMG metadata into Postgres and, when explicitly enabled, copy recording artifacts into a private Storage bucket. A network failure never removes the local recording.
+
+1. Create a Supabase project and run [`supabase/migrations/202610150001_flexmap_dataset_vault.sql`](supabase/migrations/202610150001_flexmap_dataset_vault.sql) once in its SQL editor.
+2. Copy `.env.example` to `.env` and set `FLEXMAP_SUPABASE_URL` plus a backend-only `FLEXMAP_SUPABASE_SECRET_KEY` (`sb_secret_...`).
+3. Set `FLEXMAP_SUPABASE_SYNC_ENABLED=true`, restart the Python backend, open **Master → Dataset Vault**, and select **Sync vault**.
+4. Leave `FLEXMAP_SUPABASE_UPLOAD_ARTIFACTS=false` until private Storage capacity, consent, retention, and regional research-data requirements have been confirmed. When enabled, artifacts are uploaded to the private `flexmap-dataset` bucket.
+
+Never put the Supabase secret key in a `NEXT_PUBLIC_*` variable, browser code, Git, or Cloudflare Pages frontend settings. The Master backend is the only component allowed to use it. The SQL migration enables RLS, removes `anon` and `authenticated` table access, and keeps the Storage bucket private.
+
+## Render deployment
+
+The repository includes a `render.yaml` Blueprint for two free-tier services:
+
+- `flexmap-rehab-web-parmankaiwan`: the Next.js website
+- `flexmap-rehab-api-parmankaiwan`: the FastAPI, WebSocket, and MJPEG API
+
+Create a Render Blueprint from this repository and enter `MASTER_PASSWORD` when
+Render requests it. Render generates the session, master-service, and CV-engine
+tokens; they are not stored in Git.
+
+Camera and EMG hardware remain attached to the local acquisition computer. To
+send the existing CV output to Render, copy the generated `FLEXMAP_ENGINE_TOKEN`
+from the API service into the local CV process and start the existing engine:
+
+```powershell
+$env:FLEXMAP_WEB_BACKEND="https://flexmap-rehab-api-parmankaiwan.onrender.com"
+$env:FLEXMAP_ENGINE_TOKEN="paste-the-render-api-token-here"
+cd "C:\Users\Parman\Desktop\rehab\CV part"
+.\.venv\Scripts\Activate.ps1
+python main.py
+```
+
+Do not put the engine token in a `NEXT_PUBLIC_*` variable. The Render free tier
+has an ephemeral filesystem and can sleep while idle. Configure the private
+Supabase vault mirror before using the deployed system for persistent research
+records; until then, treat the Render deployment as a live/demo environment and
+do not collect patient recordings into it.

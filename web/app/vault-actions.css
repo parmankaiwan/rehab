@@ -1,0 +1,76 @@
+.vault-delete-cell {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+.vault-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid #e7b9bd;
+  border-radius: 9px;
+  background: #fff7f7;
+  color: #a12c36;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.vault-delete-button:hover {
+  border-color: #cf747c;
+  background: #fdebed;
+}
+.vault-delete-button:focus-visible {
+  outline: 3px solid rgba(177, 49, 60, 0.18);
+  outline-offset: 2px;
+}
+.vault-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.vault-delete-button svg {
+  width: 15px;
+  height: 15px;
+}
+.vault-cloud-status {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  margin: 18px 0 24px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.74);
+}
+.vault-cloud-status > svg {
+  width: 24px;
+  height: 24px;
+  color: #7b8984;
+}
+.vault-cloud-status.is-online > svg { color: #168b69; }
+.vault-cloud-status > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.vault-cloud-status span,
+.vault-cloud-status small { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.vault-cloud-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-weight: 800;
+  cursor: pointer;
+}
+.vault-cloud-status button:disabled { cursor: not-allowed; opacity: .5; }
+.vault-cloud-status button svg { width: 16px; height: 16px; }
+.vault-cloud-status .is-spinning { animation: vault-spin .8s linear infinite; }
+@keyframes vault-spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) {
+  .vault-cloud-status { grid-template-columns: auto 1fr; }
+  .vault-cloud-status button { grid-column: 1 / -1; justify-content: center; }
+}

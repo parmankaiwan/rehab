@@ -1,0 +1,99 @@
+.acq-camera-stage {
+  position: relative;
+  margin: 20px 0;
+}
+.acq-camera-stage .camera-card {
+  box-shadow: none;
+}
+.acq-camera-stage .camera-frame {
+  aspect-ratio: 16/9;
+}
+.acq-countdown-overlay {
+  position: absolute;
+  inset: 52px 8px 8px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(7, 24, 19, 0.6);
+  border-radius: 13px;
+  pointer-events: none;
+}
+.acq-countdown-overlay span {
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+}
+.acq-countdown-overlay strong {
+  font: 900 clamp(82px, 12vw, 150px)/1 var(--font-display);
+  text-shadow: 0 6px 28px rgba(0, 0, 0, 0.3);
+  animation: acq-countdown-pulse 0.8s ease-out;
+}
+.acq-recording-indicator {
+  position: absolute;
+  z-index: 7;
+  top: 66px;
+  right: 22px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  background: #a92d36;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  box-shadow: 0 5px 18px rgba(108, 22, 28, 0.28);
+}
+.acq-recording-indicator i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: #fff;
+}
+.acq-countdown-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.acq-countdown-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.acq-tracking-lost {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #efc0c0;
+  border-radius: 10px;
+  background: #fff1f1;
+  color: #9d2d35;
+  font-weight: 800;
+}
+@keyframes acq-countdown-pulse {
+  from {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .acq-countdown-overlay strong {
+    animation: none;
+  }
+}
+@media (max-width: 700px) {
+  .acq-countdown-overlay {
+    inset: 52px 8px 8px;
+  }
+  .acq-countdown-overlay strong {
+    font-size: 72px;
+  }
+}

@@ -59,6 +59,11 @@ def recording_cancel():
     try: return recorder.cancel()
     except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
 
+@router.post("/recordings/stop", dependencies=protected)
+def recording_stop():
+    try: return recorder.stop()
+    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
+
 
 @router.post("/recordings/{recording_id}/save", dependencies=protected)
 def recording_save(recording_id: str):
@@ -83,8 +88,8 @@ def dataset_stats(): return vault.stats()
 
 
 @router.get("/dataset/recordings", dependencies=protected)
-def recordings(search: str = "", subject: str = "", category: str = "", label: str = "", affected_side: str = "", tracking: str = "", status: str = "", session_id: str = "", rehab_type: str = ""):
-    return vault.list(search=search, subject=subject, category=category, label=label, affected_side=affected_side, tracking=tracking, status=status, session_id=session_id, rehab_type=rehab_type)
+def recordings(search: str = "", subject: str = "", category: str = "", label: str = "", affected_side: str = "", tracking: str = "", status: str = "", session_id: str = "", rehab_type: str = "", study_id: str = "", collection_id: str = "", protocol_id: str = "", trial_id: str = ""):
+    return vault.list(search=search, subject=subject, category=category, label=label, affected_side=affected_side, tracking=tracking, status=status, session_id=session_id, rehab_type=rehab_type, study_id=study_id, collection_id=collection_id, protocol_id=protocol_id, trial_id=trial_id)
 
 
 @router.get("/dataset/recordings/{recording_id}", dependencies=protected)
@@ -115,8 +120,7 @@ def recording_delete(recording_id: str, confirm: str = Query(...)):
 @router.get("/dataset/recordings/{recording_id}/files/{filename}", dependencies=protected)
 def recording_file(recording_id: str, filename: str):
     item = vault.get(recording_id)
-    allowed = {"video.mp4", "annotated_video.mp4", "preview.jpg", "metadata.json", "quality_report.json", "events.json", "landmarks.json", "landmarks.csv", "measurements.json"}
-    if not item or filename not in allowed: raise HTTPException(404, "File not found")
+    if not item or filename != __import__("pathlib").Path(filename).name or filename not in item.get("files", []): raise HTTPException(404, "File not found")
     base = (settings.root / item["relative_path"]).resolve(); path = (base / filename).resolve()
     if path.parent != base or not path.is_file(): raise HTTPException(404, "File not found")
     return FileResponse(path, filename=filename if filename != "video.mp4" else None)
