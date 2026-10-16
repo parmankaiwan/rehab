@@ -1,1 +1,9 @@
-import {MasterFrame} from "@/components/master/MasterFrame";import {RehabModuleCards} from "@/components/master/RehabModuleCards";import {protectedMaster} from "@/lib/masterPage";export const dynamic="force-dynamic";export default async function Page(){return protectedMaster(<MasterFrame><section><span className="eyebrow">Master-only research workspace</span><h1>Choose Rehab Dataset</h1><p className="master-lead">Select the rehabilitation task before recording. Every sample is stored only inside that module.</p><RehabModuleCards destination="collection"/></section></MasterFrame>)}
+import { CvCollectionHome } from "@/components/master/CvCollectionHome";
+import { MasterFrame } from "@/components/master/MasterFrame";
+import { protectedMaster } from "@/lib/masterPage";
+
+export const dynamic = "force-dynamic";
+
+export default async function Page() {
+  return protectedMaster(<MasterFrame><CvCollectionHome/></MasterFrame>);
+}

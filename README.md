@@ -130,7 +130,7 @@ Authenticated Master Mode provides non-recording viewers at:
 - `/master/live/cv` - existing CV camera, posture telemetry, Ready state, and measurements
 - `/master/live/emg` - existing EMG acquisition source, bounded waveform, processing representations, and signal freshness
 
-Live View displays current sensor data only. Opening a Live page does not create a research session, label, recording row, manifest, video, baseline, or Dataset artifact. CV Live does not open a camera or create a pose engine; `CV part/main.py` remains the only camera and MediaPipe owner. EMG Live does not open a serial port itself; the integrated backend EMG service remains the only acquisition owner.
+Live View displays current sensor data only. Opening a Live page does not create a research session, label, recording row, manifest, video, baseline, or Dataset artifact. Master CV Live has two explicit sources: **Browser MediaPipe** owns the selected browser camera and runs the pinned browser model, while **FlexMap Engine** displays the established `CV part/main.py` stream. These outputs are not equivalent or automatically synchronized. EMG Live does not open a serial port itself; the integrated backend EMG service remains the only acquisition owner.
 
 Data Collection is separate. The CV Data and EMG Data routes require explicit research metadata and an explicit recording action before saving Dataset artifacts.
 
@@ -144,6 +144,14 @@ The canonical local SQLite database and recording folders remain the acquisition
 4. Leave `FLEXMAP_SUPABASE_UPLOAD_ARTIFACTS=false` until private Storage capacity, consent, retention, and regional research-data requirements have been confirmed. When enabled, artifacts are uploaded to the private `flexmap-dataset` bucket.
 
 Never put the Supabase secret key in a `NEXT_PUBLIC_*` variable, browser code, Git, or Cloudflare Pages frontend settings. The Master backend is the only component allowed to use it. The SQL migration enables RLS, removes `anon` and `authenticated` table access, and keeps the Storage bucket private.
+
+### Browser CV Collection Studio
+
+`/master/cv-data` creates durable browser dataset and posture-label records without editing repository JSON. `/master/cv-data/studio?dataset=DS-...` uses the existing `useBrowserPose` stream for both the preview and capture: a still is inferred from the same frozen clean frame, and video uses `MediaRecorder` on that same stream without microphone audio. Pose callback timestamps are associated to video playback approximately; they are not encoded-frame IDs. Browser classifier output remains separate from the research label and technical quality.
+
+Browser datasets, labels, samples, review metadata, and private artifacts are written directly by the authenticated API to Supabase. They do not depend on Render's ephemeral disk or the legacy SQLite mirror. Run the additive migration above and configure `FLEXMAP_SUPABASE_URL`, `FLEXMAP_SUPABASE_SECRET_KEY`, and optionally `FLEXMAP_SUPABASE_VAULT_BUCKET` on the API service. `FLEXMAP_SUPABASE_SYNC_ENABLED` controls only the legacy local-first mirror and may remain false. If credentials are missing, the Studio blocks cloud save and offers a clearly labelled local download instead.
+
+New browser samples use source `BROWSER_MEDIAPIPE`, begin as `REVIEW_REQUIRED`, and are not training eligible. Existing Python-engine recordings retain their original source, recorder, local-first storage, and playback paths.
 
 ## Render deployment
 

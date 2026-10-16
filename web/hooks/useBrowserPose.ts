@@ -1,19 +1,58 @@
 "use client";
 
 import { RefObject, useCallback, useEffect, useRef, useState } from "react";
-import type { NormalizedLandmark, PoseLandmarker } from "@mediapipe/tasks-vision";
+import type { NormalizedLandmark, PoseLandmarker, PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 import type { DisplayLandmark, PostureComponent, PostureSnapshot, PostureState } from "@/types/posture";
 
 export type BrowserPoseState = "STARTING" | "CAMERA_READY" | "LIVE" | "DENIED" | "UNAVAILABLE";
+export type BrowserPoseDelegate = "GPU" | "CPU";
 
-const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/wasm";
+export interface RawPoseLandmark {
+  index: number;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  visibility: number | null;
+  presence: number | null;
+}
+
+export interface BrowserPoseObservation {
+  poseResultSequenceId: number;
+  inferenceIterationId: number;
+  sourceFrameObservationId: number;
+  wallClockTimestampMs: number;
+  monotonicTimestampMs: number;
+  mediaTimestampMs: number;
+  inferenceDurationMs: number;
+  valid: boolean;
+  normalizedLandmarks: RawPoseLandmark[];
+  worldLandmarks: RawPoseLandmark[] | null;
+  snapshot: PostureSnapshot | null;
+  model: {
+    packageVersion: string;
+    modelUrl: string;
+    wasmUrl: string;
+    delegate: BrowserPoseDelegate;
+    runningMode: "VIDEO";
+  };
+}
+
+export interface BrowserStillCapture {
+  image: Blob;
+  observation: BrowserPoseObservation;
+  width: number;
+  height: number;
+  mediaTimestampMs: number;
+  orientation: "LANDSCAPE" | "PORTRAIT" | "SQUARE";
+}
+
+const PACKAGE_VERSION = "1.1.1";
+const WASM_ROOT = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${PACKAGE_VERSION}/wasm`;
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-const NAMES: Record<number, string> = {
-  0: "HEAD_CENTER", 11: "LEFT_SHOULDER", 12: "RIGHT_SHOULDER",
-  13: "LEFT_ELBOW", 14: "RIGHT_ELBOW", 15: "LEFT_WRIST", 16: "RIGHT_WRIST",
-  23: "LEFT_HIP", 24: "RIGHT_HIP",
-};
-const REQUIRED = Object.values(NAMES);
+const LANDMARK_NAMES = ["NOSE", "LEFT_EYE_INNER", "LEFT_EYE", "LEFT_EYE_OUTER", "RIGHT_EYE_INNER", "RIGHT_EYE", "RIGHT_EYE_OUTER", "LEFT_EAR", "RIGHT_EAR", "MOUTH_LEFT", "MOUTH_RIGHT", "LEFT_SHOULDER", "RIGHT_SHOULDER", "LEFT_ELBOW", "RIGHT_ELBOW", "LEFT_WRIST", "RIGHT_WRIST", "LEFT_PINKY", "RIGHT_PINKY", "LEFT_INDEX", "RIGHT_INDEX", "LEFT_THUMB", "RIGHT_THUMB", "LEFT_HIP", "RIGHT_HIP", "LEFT_KNEE", "RIGHT_KNEE", "LEFT_ANKLE", "RIGHT_ANKLE", "LEFT_HEEL", "RIGHT_HEEL", "LEFT_FOOT_INDEX", "RIGHT_FOOT_INDEX"];
+const DISPLAY_NAMES: Record<number, string> = { 0: "HEAD_CENTER", 11: "LEFT_SHOULDER", 12: "RIGHT_SHOULDER", 13: "LEFT_ELBOW", 14: "RIGHT_ELBOW", 15: "LEFT_WRIST", 16: "RIGHT_WRIST", 23: "LEFT_HIP", 24: "RIGHT_HIP" };
+const REQUIRED = Object.values(DISPLAY_NAMES);
 
 function component(state: PostureState, display_name: string, value?: number): PostureComponent {
   return { state, display_name, value, units: value == null ? undefined : "normalized" };
@@ -21,7 +60,7 @@ function component(state: PostureState, display_name: string, value?: number): P
 
 export function browserSnapshotFromLandmarks(points: NormalizedLandmark[], frame: number, fps: number): PostureSnapshot {
   const landmarks: Record<string, DisplayLandmark> = {};
-  for (const [rawIndex, name] of Object.entries(NAMES)) {
+  for (const [rawIndex, name] of Object.entries(DISPLAY_NAMES)) {
     const point = points[Number(rawIndex)];
     const visibility = point?.visibility ?? 0;
     landmarks[name] = { x: point?.x ?? 0, y: point?.y ?? 0, z: point?.z, visibility, presence: point?.presence, valid: !!point && visibility >= .45 };
@@ -63,60 +102,168 @@ export function browserSnapshotFromLandmarks(points: NormalizedLandmark[], frame
   };
 }
 
-export function useBrowserPose(enabled = true): {
+function rawLandmarks(points: NormalizedLandmark[] | undefined): RawPoseLandmark[] | null {
+  if (!points?.length) return null;
+  return points.map((point, index) => ({ index, name: LANDMARK_NAMES[index] || `LANDMARK_${index}`, x: point.x, y: point.y, z: point.z, visibility: point.visibility ?? null, presence: point.presence ?? null }));
+}
+
+function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not encode the camera frame.")), "image/jpeg", .92));
+}
+
+export function useBrowserPose(enabled = true, deviceId?: string): {
   videoRef: RefObject<HTMLVideoElement | null>;
   snapshot: PostureSnapshot | null;
   state: BrowserPoseState;
   error: string;
+  delegate: BrowserPoseDelegate | null;
   restart: () => void;
+  getStream: () => MediaStream | null;
+  getLatestObservation: () => BrowserPoseObservation | null;
+  subscribe: (listener: (observation: BrowserPoseObservation) => void) => () => void;
+  captureStill: () => Promise<BrowserStillCapture>;
 } {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const landmarkerRef = useRef<PoseLandmarker | null>(null);
+  const delegateRef = useRef<BrowserPoseDelegate | null>(null);
+  const latestRef = useRef<BrowserPoseObservation | null>(null);
+  const listenersRef = useRef(new Set<(observation: BrowserPoseObservation) => void>());
+  const sequenceRef = useRef(0);
+  const inferenceIterationRef = useRef(0);
+  const sourceFrameRef = useRef(0);
+  const lastInferenceTimestampRef = useRef(0);
   const [snapshot, setSnapshot] = useState<PostureSnapshot | null>(null);
   const [state, setState] = useState<BrowserPoseState>("STARTING");
   const [error, setError] = useState("");
+  const [delegate, setDelegate] = useState<BrowserPoseDelegate | null>(null);
   const [generation, setGeneration] = useState(0);
   const restart = useCallback(() => setGeneration((value) => value + 1), []);
+  const getStream = useCallback(() => streamRef.current, []);
+  const getLatestObservation = useCallback(() => latestRef.current, []);
+  const subscribe = useCallback((listener: (observation: BrowserPoseObservation) => void) => {
+    listenersRef.current.add(listener);
+    return () => listenersRef.current.delete(listener);
+  }, []);
+
+  const buildObservation = useCallback((result: PoseLandmarkerResult, mediaTimestampMs: number, startedAt: number, fps: number): BrowserPoseObservation => {
+    sequenceRef.current += 1;
+    inferenceIterationRef.current += 1;
+    const normalized = result.landmarks[0];
+    const snapshotValue = normalized ? browserSnapshotFromLandmarks(normalized, inferenceIterationRef.current, fps) : null;
+    return {
+      poseResultSequenceId: sequenceRef.current,
+      inferenceIterationId: inferenceIterationRef.current,
+      sourceFrameObservationId: sourceFrameRef.current,
+      wallClockTimestampMs: Date.now(),
+      monotonicTimestampMs: startedAt,
+      mediaTimestampMs,
+      inferenceDurationMs: performance.now() - startedAt,
+      valid: !!normalized,
+      normalizedLandmarks: rawLandmarks(normalized) || [],
+      worldLandmarks: rawLandmarks(result.worldLandmarks[0]),
+      snapshot: snapshotValue,
+      model: { packageVersion: PACKAGE_VERSION, modelUrl: MODEL_URL, wasmUrl: WASM_ROOT, delegate: delegateRef.current || "CPU", runningMode: "VIDEO" },
+    };
+  }, []);
+
+  const captureStill = useCallback(async (): Promise<BrowserStillCapture> => {
+    const video = videoRef.current;
+    const landmarker = landmarkerRef.current;
+    if (!video || !landmarker || video.readyState < 2) throw new Error("Camera and pose model must be ready before capture.");
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("Camera frame capture is unavailable.");
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const startedAt = Math.max(performance.now(), lastInferenceTimestampRef.current + .01);
+    lastInferenceTimestampRef.current = startedAt;
+    sourceFrameRef.current += 1;
+    const result = landmarker.detectForVideo(canvas, startedAt);
+    const observation = buildObservation(result, video.currentTime * 1000, startedAt, latestRef.current?.snapshot?.fps || 0);
+    if (!observation.valid) throw new Error("No pose result was available for the captured frame.");
+    return { image: await canvasBlob(canvas), observation, width: canvas.width, height: canvas.height, mediaTimestampMs: video.currentTime * 1000, orientation: canvas.width === canvas.height ? "SQUARE" : canvas.width > canvas.height ? "LANDSCAPE" : "PORTRAIT" };
+  }, [buildObservation]);
 
   useEffect(() => {
     if (!enabled) return;
     let stopped = false;
-    let stream: MediaStream | null = null;
-    let landmarker: PoseLandmarker | null = null;
     let animation = 0;
-    let totalFrames = 0;
+    let videoFrameCallback = 0;
     let fpsFrames = 0;
-    let lastInference = 0;
     let fpsStarted = performance.now();
-    setState("STARTING"); setError(""); setSnapshot(null);
+    let lastFallbackMediaTime = -1;
+    let lastReactUpdate = 0;
+    const mountedVideo = videoRef.current;
+    setState("STARTING"); setError(""); setSnapshot(null); setDelegate(null);
+
+    const publish = (observation: BrowserPoseObservation, now: number) => {
+      latestRef.current = observation;
+      listenersRef.current.forEach((listener) => listener(observation));
+      if (now - lastReactUpdate >= 100) {
+        lastReactUpdate = now;
+        setSnapshot(observation.snapshot);
+        setState(observation.valid ? "LIVE" : "CAMERA_READY");
+      }
+    };
+
+    const infer = (mediaTimestampMs: number) => {
+      const video = videoRef.current;
+      const landmarker = landmarkerRef.current;
+      if (stopped || !video || !landmarker || video.readyState < 2) return;
+      const startedAt = Math.max(performance.now(), lastInferenceTimestampRef.current + .01);
+      if (startedAt - lastInferenceTimestampRef.current < 45) return;
+      lastInferenceTimestampRef.current = startedAt;
+      sourceFrameRef.current += 1;
+      fpsFrames += 1;
+      const result = landmarker.detectForVideo(video, startedAt);
+      const fps = fpsFrames * 1000 / Math.max(1, startedAt - fpsStarted);
+      publish(buildObservation(result, mediaTimestampMs, startedAt, fps), startedAt);
+      if (fpsFrames >= 120) { fpsFrames = 0; fpsStarted = startedAt; }
+    };
+
     const run = async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser does not support camera access.");
-        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
-        if (stopped) return;
-        const video = videoRef.current;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, facingMode: deviceId ? undefined : "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
+        if (stopped) { stream.getTracks().forEach((track) => track.stop()); return; }
+        streamRef.current = stream;
+        const video = mountedVideo;
         if (!video) throw new Error("Camera display is not ready.");
-        video.srcObject = stream; await video.play(); setState("CAMERA_READY");
+        video.srcObject = stream;
+        await video.play();
+        setState("CAMERA_READY");
         const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
         const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
         try {
-          landmarker = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
+          landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
+          delegateRef.current = "GPU";
         } catch {
-          landmarker = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
+          landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
+          delegateRef.current = "CPU";
         }
-        const detect = () => {
-          if (stopped || !landmarker) return;
-          const now = performance.now();
-          if (video.readyState >= 2 && now - lastInference >= 50) {
-            lastInference = now; totalFrames += 1; fpsFrames += 1;
-            const result = landmarker.detectForVideo(video, now);
-            const fps = fpsFrames * 1000 / Math.max(1, now - fpsStarted);
-            if (result.landmarks[0]) { setSnapshot(browserSnapshotFromLandmarks(result.landmarks[0], totalFrames, fps)); setState("LIVE"); }
-            else { setSnapshot(null); setState("CAMERA_READY"); }
-            if (fpsFrames >= 120) { fpsFrames = 0; fpsStarted = now; }
-          }
-          animation = requestAnimationFrame(detect);
-        };
-        animation = requestAnimationFrame(detect);
+        setDelegate(delegateRef.current);
+        const supportsFrameCallback = "requestVideoFrameCallback" in video;
+        if (supportsFrameCallback) {
+          const onFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+            if (stopped) return;
+            infer(metadata.mediaTime * 1000);
+            videoFrameCallback = video.requestVideoFrameCallback(onFrame);
+          };
+          videoFrameCallback = video.requestVideoFrameCallback(onFrame);
+        } else {
+          const fallbackVideo: HTMLVideoElement = video;
+          const onAnimation = () => {
+            if (stopped) return;
+            if (fallbackVideo.currentTime !== lastFallbackMediaTime) {
+              lastFallbackMediaTime = fallbackVideo.currentTime;
+              infer(fallbackVideo.currentTime * 1000);
+            }
+            animation = requestAnimationFrame(onAnimation);
+          };
+          animation = requestAnimationFrame(onAnimation);
+        }
       } catch (cause) {
         if (stopped) return;
         const denied = cause instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(cause.name);
@@ -126,10 +273,18 @@ export function useBrowserPose(enabled = true): {
     };
     void run();
     return () => {
-      stopped = true; cancelAnimationFrame(animation); landmarker?.close();
-      stream?.getTracks().forEach((track) => track.stop());
-      if (videoRef.current) videoRef.current.srcObject = null;
+      stopped = true;
+      cancelAnimationFrame(animation);
+      const video = mountedVideo;
+      if (video && videoFrameCallback && "cancelVideoFrameCallback" in video) video.cancelVideoFrameCallback(videoFrameCallback);
+      landmarkerRef.current?.close();
+      landmarkerRef.current = null;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      latestRef.current = null;
+      if (video) video.srcObject = null;
     };
-  }, [enabled, generation]);
-  return { videoRef, snapshot, state, error, restart };
+  }, [enabled, generation, deviceId, buildObservation]);
+
+  return { videoRef, snapshot, state, error, delegate, restart, getStream, getLatestObservation, subscribe, captureStill };
 }

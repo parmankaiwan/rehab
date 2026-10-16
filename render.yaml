@@ -18,6 +18,14 @@ services:
         generateValue: true
       - key: FLEXMAP_SUPABASE_SYNC_ENABLED
         value: "false"
+      # Required for the durable browser-owned CV Collection Studio. Values are
+      # entered in Render and never exposed to the Next.js browser bundle.
+      - key: FLEXMAP_SUPABASE_URL
+        sync: false
+      - key: FLEXMAP_SUPABASE_SECRET_KEY
+        sync: false
+      - key: FLEXMAP_SUPABASE_VAULT_BUCKET
+        value: flexmap-dataset
 
   - type: web
     name: flexmap-rehab-web-parmankaiwan

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hmac
 import os
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 
 from .cv_recording_service import CvRecordingService
@@ -13,11 +14,22 @@ from .dataset_vault import DatasetVault
 from .posture_stream import store
 from .video_store import raw_video_store, video_store
 from .video_preview import VideoPreviewService
+from .browser_collection import (
+    ArtifactUpload,
+    BrowserCollectionRepository,
+    BrowserDatasetCreate,
+    BrowserDatasetUpdate,
+    BrowserLabelCreate,
+    BrowserSampleMetadata,
+    BrowserSampleUpdate,
+)
+from .supabase_vault import SupabaseVaultError
 
 settings = dataset_settings()
 vault = DatasetVault(settings)
 recorder = CvRecordingService(settings, vault, raw_video_store, video_store, store)
 video_previews = VideoPreviewService(settings, vault)
+browser_collections = BrowserCollectionRepository()
 router = APIRouter(prefix="/api/master", tags=["Master Dataset"])
 
 
@@ -30,6 +42,133 @@ def require_master(x_flexmap_master_token: str | None = Header(default=None)) ->
 
 
 protected = [Depends(require_master)]
+
+
+def browser_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, SupabaseVaultError):
+        status = 503 if not browser_collections.config.configured else 502
+        return HTTPException(status, str(exc))
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(404, "Browser collection resource not found")
+    return HTTPException(422, str(exc))
+
+
+@router.get("/browser-collections/status", dependencies=protected)
+def browser_collection_status():
+    return browser_collections.status()
+
+
+@router.get("/browser-collections", dependencies=protected)
+def browser_collection_list(search: str = "", module_id: str = "", capture_type: str = "", status: str = ""):
+    try:
+        return browser_collections.list_datasets(search=search, module_id=module_id, capture_type=capture_type, status=status)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.post("/browser-collections", dependencies=protected)
+def browser_collection_create(request: BrowserDatasetCreate):
+    try:
+        vault.registry.by_id(request.rehabilitation_module_id)
+        return browser_collections.create_dataset(request)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.get("/browser-collections/{dataset_id}", dependencies=protected)
+def browser_collection_detail(dataset_id: str):
+    try:
+        item = browser_collections.get_dataset(dataset_id)
+        if not item:
+            raise FileNotFoundError(dataset_id)
+        return item
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.patch("/browser-collections/{dataset_id}", dependencies=protected)
+def browser_collection_update(dataset_id: str, update: BrowserDatasetUpdate):
+    try:
+        return browser_collections.update_dataset(dataset_id, update)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.post("/browser-collections/{dataset_id}/labels", dependencies=protected)
+def browser_collection_label(dataset_id: str, request: BrowserLabelCreate):
+    try:
+        if not browser_collections.get_dataset(dataset_id):
+            raise FileNotFoundError(dataset_id)
+        return browser_collections.create_label(dataset_id, request)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.post("/browser-collections/samples", dependencies=protected)
+async def browser_collection_sample(request: Request):
+    try:
+        form = await request.form()
+        raw_metadata = form.get("metadata")
+        idempotency_key = str(form.get("idempotency_key") or "")
+        if not raw_metadata or not idempotency_key or len(idempotency_key) > 120:
+            raise ValueError("Metadata and a bounded idempotency key are required")
+        metadata = BrowserSampleMetadata.model_validate_json(str(raw_metadata))
+        artifacts: list[ArtifactUpload] = []
+        for key in ("media", "pose_observations", "measurements", "events", "quality_report", "manifest", "thumbnail"):
+            value = form.get(key)
+            if value is None or not hasattr(value, "read"):
+                continue
+            content = await value.read()
+            if not content:
+                raise ValueError(f"{key} artifact is empty")
+            artifacts.append(ArtifactUpload(Path(value.filename or key).name, value.content_type or "application/octet-stream", content))
+        return browser_collections.save_sample(metadata, artifacts, idempotency_key)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.get("/browser-collections/samples/{sample_id}", dependencies=protected)
+def browser_collection_sample_detail(sample_id: str):
+    try:
+        item = browser_collections.get_sample(sample_id, include_trashed=True)
+        if not item:
+            raise FileNotFoundError(sample_id)
+        return item
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.patch("/browser-collections/samples/{sample_id}", dependencies=protected)
+def browser_collection_sample_update(sample_id: str, update: BrowserSampleUpdate):
+    try:
+        return browser_collections.update_sample(sample_id, update)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.post("/browser-collections/samples/{sample_id}/trash", dependencies=protected)
+def browser_collection_sample_trash(sample_id: str):
+    try:
+        return browser_collections.set_sample_trashed(sample_id, True)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.post("/browser-collections/samples/{sample_id}/restore", dependencies=protected)
+def browser_collection_sample_restore(sample_id: str):
+    try:
+        return browser_collections.set_sample_trashed(sample_id, False)
+    except Exception as exc:
+        raise browser_error(exc) from exc
+
+
+@router.get("/browser-collections/samples/{sample_id}/artifacts/{filename}", dependencies=protected)
+def browser_collection_artifact(sample_id: str, filename: str, request: Request):
+    try:
+        content, status, headers = browser_collections.artifact(sample_id, filename, request.headers.get("range"))
+        return Response(content=content, status_code=status, headers=headers, media_type=headers.get("content-type"))
+    except Exception as exc:
+        raise browser_error(exc) from exc
 
 
 @router.get("/dataset/settings", dependencies=protected)
