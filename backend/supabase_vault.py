@@ -54,6 +54,18 @@ class SupabaseVaultConfig:
     def configured(self) -> bool:
         return bool(self.url and self.secret_key)
 
+    def auth_headers(self) -> dict[str, str]:
+        """Return documented headers for current and legacy server keys.
+
+        New ``sb_secret_`` keys are opaque API keys, not JWTs. Legacy
+        service-role JWTs remain compatible with projects that have not yet
+        migrated to Supabase's current key format.
+        """
+        headers = {"apikey": self.secret_key}
+        if not self.secret_key.startswith("sb_secret_"):
+            headers["Authorization"] = f"Bearer {self.secret_key}"
+        return headers
+
     def validate(self) -> None:
         if not self.configured:
             raise SupabaseVaultError(
@@ -98,11 +110,7 @@ class SupabaseVaultMirror:
         self.config.validate()
         return httpx.Client(
             base_url=self.config.url,
-            headers={
-                "apikey": self.config.secret_key,
-                "Authorization": f"Bearer {self.config.secret_key}",
-                "User-Agent": "FlexMap-Vault/1.0",
-            },
+            headers={**self.config.auth_headers(), "User-Agent": "FlexMap-Vault/1.0"},
             timeout=self.config.timeout_seconds,
             follow_redirects=False,
             transport=self._transport,

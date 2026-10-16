@@ -24,12 +24,14 @@ from .browser_collection import (
     BrowserSampleUpdate,
 )
 from .supabase_vault import SupabaseVaultError
+from .data_backend import StorageStatusService
 
 settings = dataset_settings()
 vault = DatasetVault(settings)
 recorder = CvRecordingService(settings, vault, raw_video_store, video_store, store)
 video_previews = VideoPreviewService(settings, vault)
 browser_collections = BrowserCollectionRepository()
+storage_status_service = StorageStatusService()
 router = APIRouter(prefix="/api/master", tags=["Master Dataset"])
 
 
@@ -55,7 +57,32 @@ def browser_error(exc: Exception) -> HTTPException:
 
 @router.get("/browser-collections/status", dependencies=protected)
 def browser_collection_status():
-    return browser_collections.status()
+    status = storage_status_service.check()
+    missing = []
+    if not browser_collections.config.url:
+        missing.append("FLEXMAP_SUPABASE_URL")
+    if not browser_collections.config.secret_key:
+        missing.append("FLEXMAP_SUPABASE_SECRET_KEY")
+    ready = status["state"] == "READY"
+    return {**status, "configured": ready, "enabled": ready, "missing": missing, "bucket_state": status["bucket"], "bucket": browser_collections.config.bucket, "durability": "SUPABASE_PRIVATE" if ready else status["state"]}
+
+
+@router.get("/storage/status", dependencies=protected)
+def storage_status():
+    return storage_status_service.check()
+
+
+@router.post("/storage/test", dependencies=protected)
+def storage_test():
+    return storage_status_service.check()
+
+
+@router.post("/storage/reconcile", dependencies=protected)
+def storage_reconcile():
+    try:
+        return browser_collections.reconcile_failed_uploads()
+    except Exception as exc:
+        raise browser_error(exc) from exc
 
 
 @router.get("/browser-collections", dependencies=protected)

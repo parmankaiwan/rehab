@@ -134,14 +134,16 @@ Live View displays current sensor data only. Opening a Live page does not create
 
 Data Collection is separate. The CV Data and EMG Data routes require explicit research metadata and an explicit recording action before saving Dataset artifacts.
 
-## Supabase Dataset Vault mirror
+## Dataset storage modes and Supabase
 
-The canonical local SQLite database and recording folders remain the acquisition source of truth. An optional server-only Supabase mirror can copy both CV and EMG metadata into Postgres and, when explicitly enabled, copy recording artifacts into a private Storage bucket. A network failure never removes the local recording.
+`FLEXMAP_DATA_BACKEND=local|supabase` explicitly selects the authority. Local mode keeps SQLite and recording folders authoritative and can use the older controlled mirror. Supabase mode makes Postgres and the private Storage bucket authoritative for hosted browser collection data; it never silently falls back to Render's disk. Keep `FLEXMAP_SUPABASE_SYNC_ENABLED=false` in Supabase mode to prevent dual writers.
 
 1. Create a Supabase project and run [`supabase/migrations/202610150001_flexmap_dataset_vault.sql`](supabase/migrations/202610150001_flexmap_dataset_vault.sql) once in its SQL editor.
 2. Copy `.env.example` to `.env` and set `FLEXMAP_SUPABASE_URL` plus a backend-only `FLEXMAP_SUPABASE_SECRET_KEY` (`sb_secret_...`).
 3. Set `FLEXMAP_SUPABASE_SYNC_ENABLED=true`, restart the Python backend, open **Master → Dataset Vault**, and select **Sync vault**.
 4. Leave `FLEXMAP_SUPABASE_UPLOAD_ARTIFACTS=false` until private Storage capacity, consent, retention, and regional research-data requirements have been confirmed. When enabled, artifacts are uploaded to the private `flexmap-dataset` bucket.
+
+Those four steps describe the optional mirror in **local** mode. For authoritative hosted storage, apply both versioned migrations and follow [Supabase setup](SUPABASE_SETUP.md). For governed existing-data transfer, use the dry-run/checkpoint workflow in [local-to-Supabase migration](LOCAL_TO_SUPABASE_MIGRATION.md).
 
 Never put the Supabase secret key in a `NEXT_PUBLIC_*` variable, browser code, Git, or Cloudflare Pages frontend settings. The Master backend is the only component allowed to use it. The SQL migration enables RLS, removes `anon` and `authenticated` table access, and keeps the Storage bucket private.
 
@@ -149,7 +151,7 @@ Never put the Supabase secret key in a `NEXT_PUBLIC_*` variable, browser code, G
 
 `/master/cv-data` creates durable browser dataset and posture-label records without editing repository JSON. `/master/cv-data/studio?dataset=DS-...` uses the existing `useBrowserPose` stream for both the preview and capture: a still is inferred from the same frozen clean frame, and video uses `MediaRecorder` on that same stream without microphone audio. Pose callback timestamps are associated to video playback approximately; they are not encoded-frame IDs. Browser classifier output remains separate from the research label and technical quality.
 
-Browser datasets, labels, samples, review metadata, and private artifacts are written directly by the authenticated API to Supabase. They do not depend on Render's ephemeral disk or the legacy SQLite mirror. Run the additive migration above and configure `FLEXMAP_SUPABASE_URL`, `FLEXMAP_SUPABASE_SECRET_KEY`, and optionally `FLEXMAP_SUPABASE_VAULT_BUCKET` on the API service. `FLEXMAP_SUPABASE_SYNC_ENABLED` controls only the legacy local-first mirror and may remain false. If credentials are missing, the Studio blocks cloud save and offers a clearly labelled local download instead.
+Browser datasets, labels, samples, review metadata, and private artifacts are written directly by the authenticated API to Supabase. They do not depend on Render's ephemeral disk or the legacy SQLite mirror. Samples move through `DRAFT → UPLOADING → VERIFYING → STORED`; only verified stored samples appear in counts and playback. If credentials or migrations are missing, the Studio blocks cloud save and reports the storage state.
 
 New browser samples use source `BROWSER_MEDIAPIPE`, begin as `REVIEW_REQUIRED`, and are not training eligible. Existing Python-engine recordings retain their original source, recorder, local-first storage, and playback paths.
 

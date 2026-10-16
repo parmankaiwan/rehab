@@ -84,6 +84,42 @@ def test_idempotent_sample_retry_returns_existing_without_upload():
     assert result == existing
 
 
+def test_sample_is_verified_before_stored_and_uses_opaque_paths():
+    repository = BrowserCollectionRepository(config())
+    repository.get_dataset = lambda _dataset_id: {"storage_key": "ignored", "archived": False, "permitted_capture_types": "BOTH", "allow_raw_media": True, "labels": [{"label_id": "LBL-one", "archived": False}]}
+    transitions = []
+    object_paths = []
+
+    def handler(request: httpx.Request):
+        path = request.url.path
+        if path.endswith("flexmap_browser_samples") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if path.endswith("flexmap_browser_samples") and request.method == "POST":
+            body = json.loads(request.content)
+            transitions.append(body["persistence_status"])
+            return httpx.Response(201, json=[body])
+        if path.endswith("flexmap_browser_samples") and request.method == "PATCH":
+            body = json.loads(request.content)
+            transitions.append(body["persistence_status"])
+            return httpx.Response(200, json=[body] if body["persistence_status"] == "STORED" else [])
+        if path.endswith("flexmap_recording_artifacts"):
+            return httpx.Response(201)
+        if path.startswith("/storage/v1/object/authenticated/"):
+            return httpx.Response(200, content=b"jpeg" if path.endswith("image.jpg") else b"[]")
+        if path.startswith("/storage/v1/object/") and request.method == "POST":
+            object_paths.append(path)
+            return httpx.Response(200)
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    repository._transport = httpx.MockTransport(handler)
+    result = repository.save_sample(sample_metadata(), [ArtifactUpload("image.jpg", "image/jpeg", b"jpeg"), ArtifactUpload("pose_observations.json", "application/json", b"[]")], "new-key")
+    assert transitions == ["DRAFT", "UPLOADING", "VERIFYING", "STORED"]
+    assert result["persistence_status"] == "STORED"
+    assert all("/datasets/DS-one/recordings/SMP-" in path for path in object_paths)
+    assert any("/raw/image.jpg" in path for path in object_paths)
+    assert any("/observations/pose_observations.json" in path for path in object_paths)
+
+
 def test_still_media_type_must_match_extension():
     data = sample_metadata().model_dump()
     data["media_extension"] = ".mp4"

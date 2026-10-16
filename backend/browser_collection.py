@@ -184,7 +184,7 @@ class BrowserCollectionRepository:
         self.config.validate()
         return httpx.Client(
             base_url=self.config.url,
-            headers={"apikey": self.config.secret_key, "Authorization": f"Bearer {self.config.secret_key}", "User-Agent": "FlexMap-Browser-Collection/1.0"},
+            headers={**self.config.auth_headers(), "User-Agent": "FlexMap-Browser-Collection/1.0"},
             timeout=max(30.0, self.config.timeout_seconds),
             follow_redirects=False,
             transport=self._transport,
@@ -218,21 +218,11 @@ class BrowserCollectionRepository:
             response = client.get("/rest/v1/flexmap_browser_datasets", params=params)
             self._raise(response, "dataset list")
             datasets = response.json()
-            labels = client.get("/rest/v1/flexmap_browser_labels", params={"select": "dataset_id", "archived": "eq.false"})
-            self._raise(labels, "label count")
-            samples = client.get("/rest/v1/flexmap_browser_samples", params={"select": "dataset_id,sample_type,review_status,created_at", "trashed_at": "is.null"})
-            self._raise(samples, "sample count")
-        label_counts: dict[str, int] = {}
-        sample_stats: dict[str, dict[str, Any]] = {}
-        for label in labels.json():
-            label_counts[label["dataset_id"]] = label_counts.get(label["dataset_id"], 0) + 1
-        for sample in samples.json():
-            current = sample_stats.setdefault(sample["dataset_id"], {"still_count": 0, "video_count": 0, "reviewed_count": 0, "approved_count": 0, "last_sample_at": None})
-            current["still_count" if sample["sample_type"] == "STILL" else "video_count"] += 1
-            current["reviewed_count"] += sample["review_status"] != "REVIEW_REQUIRED"
-            current["approved_count"] += sample["review_status"] == "APPROVED"
-            current["last_sample_at"] = max(filter(None, [current["last_sample_at"], sample.get("created_at")]), default=None)
-        return [{**dataset, "label_count": label_counts.get(dataset["dataset_id"], 0), **sample_stats.get(dataset["dataset_id"], {"still_count": 0, "video_count": 0, "reviewed_count": 0, "approved_count": 0, "last_sample_at": None})} for dataset in datasets]
+            stats_response = client.get("/rest/v1/flexmap_browser_dataset_stats", params={"select": "*"})
+            self._raise(stats_response, "dataset aggregates")
+        stats = {row["dataset_id"]: row for row in stats_response.json()}
+        empty = {"label_count": 0, "still_count": 0, "video_count": 0, "reviewed_count": 0, "approved_count": 0, "last_sample_at": None}
+        return [{**dataset, **stats.get(dataset["dataset_id"], empty)} for dataset in datasets]
 
     def create_dataset(self, request: BrowserDatasetCreate) -> dict[str, Any]:
         dataset_id = f"DS-{uuid.uuid4().hex}"
@@ -262,7 +252,7 @@ class BrowserCollectionRepository:
                 return None
             labels = client.get("/rest/v1/flexmap_browser_labels", params={"select": "*", "dataset_id": f"eq.{dataset_id}", "order": "created_at"})
             self._raise(labels, "dataset labels")
-            samples = client.get("/rest/v1/flexmap_browser_samples", params={"select": "*", "dataset_id": f"eq.{dataset_id}", "trashed_at": "is.null", "order": "created_at.desc"})
+            samples = client.get("/rest/v1/flexmap_browser_samples", params={"select": "*", "dataset_id": f"eq.{dataset_id}", "trashed_at": "is.null", "persistence_status": "eq.STORED", "order": "created_at.desc", "limit": "100"})
             self._raise(samples, "dataset samples")
         return {**rows[0], "labels": labels.json(), "samples": samples.json()}
 
@@ -356,42 +346,87 @@ class BrowserCollectionRepository:
         if sum(len(item.content) for item in artifacts) > 150 * 1024 * 1024:
             raise ValueError("Capture package exceeds the 150 MB limit")
         sample_id = f"SMP-{uuid.uuid4().hex}"
-        prefix = f"browser/{dataset['storage_key']}/{sample_id}"
+        # Paths use opaque server-issued IDs only; participant fields and user
+        # supplied labels never become object names.
+        prefix = f"datasets/{metadata.dataset_id}/recordings/{sample_id}"
         manifest: list[dict[str, Any]] = []
-        uploaded_paths: list[str] = []
         with self._client() as client:
             existing = client.get("/rest/v1/flexmap_browser_samples", params={"select": "*", "idempotency_key": f"eq.{idempotency_key}", "limit": "1"})
             self._raise(existing, "idempotency check")
             rows = existing.json()
             if rows:
                 return rows[0]
+            now = self._now()
+            payload = {"sample_id": sample_id, "dataset_id": metadata.dataset_id, "label_id": metadata.label_id, "label_at_capture": metadata.label_at_capture, "reviewed_label": None, "sample_type": metadata.sample_type, "source": metadata.source, "subject_id": metadata.subject_id, "session_id": metadata.session_id, "protocol_id": metadata.protocol_id, "trial_id": metadata.trial_id, "attempt_number": metadata.attempt_number, "notes": metadata.notes, "capture_state": metadata.capture_state, "technical_quality": metadata.technical_quality, "tracking_quality": metadata.tracking_quality, "review_status": "REVIEW_REQUIRED", "training_eligible": False, "training_ineligibility_reason": "REVIEW_REQUIRED", "storage_prefix": prefix, "artifact_manifest": [], "metadata": metadata.model_dump(mode="json"), "idempotency_key": idempotency_key, "persistence_status": "DRAFT", "created_at": now, "server_received_at": now, "updated_at": now}
+            draft = client.post("/rest/v1/flexmap_browser_samples", headers={"Prefer": "return=representation"}, json=payload)
+            self._raise(draft, "sample draft creation")
             try:
+                transition = client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{sample_id}", "persistence_status": "eq.DRAFT"}, json={"persistence_status": "UPLOADING", "updated_at": self._now()})
+                self._raise(transition, "upload transition")
                 for artifact in artifacts:
                     safe_name = Path(artifact.name).name
                     if safe_name != artifact.name or not safe_name:
                         raise ValueError("Unsafe artifact name")
-                    object_path = f"{prefix}/{safe_name}"
+                    role = "RAW" if artifact in media else "OBSERVATION"
+                    folder = "raw" if role == "RAW" else "observations"
+                    object_path = f"{prefix}/{folder}/{safe_name}"
                     response = client.post(f"/storage/v1/object/{quote(self.config.bucket, safe='')}/{quote(object_path, safe='/')}", headers={"Content-Type": artifact.content_type, "x-upsert": "false"}, content=artifact.content)
                     self._raise(response, f"artifact upload ({safe_name})")
-                    uploaded_paths.append(object_path)
-                    manifest.append({"name": safe_name, "object_path": object_path, "content_type": artifact.content_type, "size_bytes": len(artifact.content), "sha256": hashlib.sha256(artifact.content).hexdigest(), "role": "RAW" if artifact in media else "OBSERVATION"})
-                payload = {"sample_id": sample_id, "dataset_id": metadata.dataset_id, "label_id": metadata.label_id, "label_at_capture": metadata.label_at_capture, "reviewed_label": None, "sample_type": metadata.sample_type, "source": metadata.source, "subject_id": metadata.subject_id, "session_id": metadata.session_id, "protocol_id": metadata.protocol_id, "trial_id": metadata.trial_id, "attempt_number": metadata.attempt_number, "notes": metadata.notes, "capture_state": metadata.capture_state, "technical_quality": metadata.technical_quality, "tracking_quality": metadata.tracking_quality, "review_status": "REVIEW_REQUIRED", "training_eligible": False, "training_ineligibility_reason": "REVIEW_REQUIRED", "storage_prefix": prefix, "artifact_manifest": manifest, "metadata": metadata.model_dump(mode="json"), "idempotency_key": idempotency_key, "created_at": self._now(), "server_received_at": self._now(), "updated_at": self._now()}
-                response = client.post("/rest/v1/flexmap_browser_samples", headers={"Prefer": "return=representation"}, json=payload)
-                self._raise(response, "sample completion")
-            except Exception:
-                # The row is authoritative. If completion fails, remove the
-                # temporary objects so a partial package never appears saved.
-                for object_path in reversed(uploaded_paths):
-                    client.delete(f"/storage/v1/object/{quote(self.config.bucket, safe='')}/{quote(object_path, safe='/')}")
+                    expected_hash = hashlib.sha256(artifact.content).hexdigest()
+                    verified = client.get(f"/storage/v1/object/authenticated/{quote(self.config.bucket, safe='')}/{quote(object_path, safe='/')}")
+                    self._raise(verified, f"artifact verification ({safe_name})")
+                    if len(verified.content) != len(artifact.content) or hashlib.sha256(verified.content).hexdigest() != expected_hash:
+                        raise SupabaseVaultError(f"Supabase artifact verification failed ({safe_name})")
+                    item = {"name": safe_name, "object_path": object_path, "content_type": artifact.content_type, "size_bytes": len(artifact.content), "sha256": expected_hash, "role": role, "verification_status": "VERIFIED"}
+                    manifest.append(item)
+                    artifact_row = client.post("/rest/v1/flexmap_recording_artifacts", json={"sample_id": sample_id, "artifact_role": role + ":" + safe_name, "object_path": object_path, "content_type": artifact.content_type, "byte_size": len(artifact.content), "sha256": expected_hash, "verification_status": "VERIFIED", "verified_at": self._now()})
+                    self._raise(artifact_row, "artifact index")
+                verifying = client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{sample_id}", "persistence_status": "eq.UPLOADING"}, json={"persistence_status": "VERIFYING", "artifact_manifest": manifest, "updated_at": self._now()})
+                self._raise(verifying, "verification transition")
+                completed_at = self._now()
+                completed = client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{sample_id}", "persistence_status": "eq.VERIFYING"}, headers={"Prefer": "return=representation"}, json={"persistence_status": "STORED", "verified_at": completed_at, "artifact_manifest": manifest, "updated_at": completed_at})
+                self._raise(completed, "sample finalization")
+                completed_rows = completed.json()
+                if not completed_rows:
+                    raise SupabaseVaultError("Supabase sample finalization lost its concurrency transition")
+                payload = completed_rows[0]
+            except Exception as exc:
+                # Keep both the draft and uploaded objects recoverable. A retry
+                # with the same idempotency key cannot create a duplicate.
+                client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{sample_id}"}, json={"persistence_status": "FAILED", "failure_reason": type(exc).__name__, "artifact_manifest": manifest, "updated_at": self._now()})
                 raise
         return payload
+
+    def reconcile_failed_uploads(self) -> dict[str, int]:
+        """Finalize recoverable failed packages whose indexed objects verify."""
+        checked = recovered = still_failed = 0
+        with self._client() as client:
+            response = client.get("/rest/v1/flexmap_browser_samples", params={"select": "sample_id,artifact_manifest", "persistence_status": "in.(FAILED,VERIFYING,INTERRUPTED)", "trashed_at": "is.null"})
+            self._raise(response, "failed upload list")
+            for row in response.json():
+                checked += 1
+                manifest = row.get("artifact_manifest") or []
+                valid = bool(manifest)
+                for artifact in manifest:
+                    data = client.get(f"/storage/v1/object/authenticated/{quote(self.config.bucket, safe='')}/{quote(artifact['object_path'], safe='/')}")
+                    if not data.is_success or len(data.content) != artifact.get("size_bytes") or hashlib.sha256(data.content).hexdigest() != artifact.get("sha256"):
+                        valid = False
+                        break
+                if not valid:
+                    still_failed += 1
+                    continue
+                now = self._now()
+                completed = client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{row['sample_id']}", "persistence_status": "in.(FAILED,VERIFYING,INTERRUPTED)"}, json={"persistence_status": "STORED", "verified_at": now, "failure_reason": None, "updated_at": now})
+                self._raise(completed, "failed upload reconciliation")
+                recovered += 1
+        return {"checked": checked, "recovered": recovered, "still_failed": still_failed}
 
     def artifact(self, sample_id: str, filename: str, range_header: str | None = None) -> tuple[bytes, int, dict[str, str]]:
         safe_name = Path(filename).name
         if safe_name != filename:
             raise FileNotFoundError(filename)
         with self._client() as client:
-            response = client.get("/rest/v1/flexmap_browser_samples", params={"select": "artifact_manifest", "sample_id": f"eq.{sample_id}", "trashed_at": "is.null", "limit": "1"})
+            response = client.get("/rest/v1/flexmap_browser_samples", params={"select": "artifact_manifest", "sample_id": f"eq.{sample_id}", "persistence_status": "eq.STORED", "trashed_at": "is.null", "limit": "1"})
             self._raise(response, "sample artifact lookup")
             rows = response.json()
             if not rows:

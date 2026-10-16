@@ -28,7 +28,7 @@ def test_public_status_never_exposes_secret():
     assert "sb_secret_test" not in json.dumps(status)
 
 
-def test_sync_upserts_recording_with_server_authorization():
+def test_sync_upserts_recording_with_current_server_key_headers():
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -54,7 +54,8 @@ def test_sync_upserts_recording_with_server_authorization():
     }
     request = requests[0]
     assert request.url.path == "/rest/v1/flexmap_dataset_recordings"
-    assert request.headers["authorization"].startswith("Bearer sb_secret_")
+    assert request.headers["apikey"].startswith("sb_secret_")
+    assert "authorization" not in request.headers
     assert request.headers["prefer"] == "resolution=merge-duplicates,return=minimal"
     payload = json.loads(request.content)
     assert payload["recording_id"] == "REC-20261015-000001"
@@ -90,3 +91,10 @@ def test_disabled_sync_makes_no_request():
         config(enabled=False), transport=httpx.MockTransport(handler)
     )
     assert mirror.sync_recording({"recording_id": "REC-1"})["status"] == "DISABLED"
+
+
+def test_legacy_service_role_jwt_keeps_bearer_compatibility():
+    legacy = config(secret_key="eyJhbGciOiJIUzI1NiJ9.payload.signature")
+    headers = legacy.auth_headers()
+    assert headers["apikey"] == legacy.secret_key
+    assert headers["Authorization"] == f"Bearer {legacy.secret_key}"

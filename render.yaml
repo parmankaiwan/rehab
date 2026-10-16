@@ -18,6 +18,8 @@ services:
         generateValue: true
       - key: FLEXMAP_SUPABASE_SYNC_ENABLED
         value: "false"
+      - key: FLEXMAP_DATA_BACKEND
+        value: supabase
       # Required for the durable browser-owned CV Collection Studio. Values are
       # entered in Render and never exposed to the Next.js browser bundle.
       - key: FLEXMAP_SUPABASE_URL
