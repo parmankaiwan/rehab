@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Activity, ArrowRight, Database, Folder, Move3d, PersonStanding, Play, Radio, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RehabModule } from "@/types/dataset";
+import { apiErrorMessage, masterApiGet } from "@/lib/masterApi";
 
 const icons = [PersonStanding, Move3d, Activity, Folder];
 
@@ -17,20 +18,15 @@ export function RehabModuleCards({ destination }: { destination: "collection" | 
     setLoading(true);
     setError("");
     try {
-      const moduleResponse = await fetch("/api/master/data/rehab-modules", { cache: "no-store" });
-      if (!moduleResponse.ok) throw new Error("Posture datasets are temporarily unavailable.");
-      setModules(await moduleResponse.json());
+      const rows = await masterApiGet<RehabModule[]>("/api/master/data/rehab-modules", { validate: (value): value is RehabModule[] => Array.isArray(value) });
+      setModules(rows);
 
       if (destination === "dataset") {
-        const emgResponse = await fetch("/api/master/data/emg/rehab-modules", { cache: "no-store" });
-        if (emgResponse.ok) {
-          const rows: { id: string; emg_stats?: { total_recordings: number } }[] = await emgResponse.json();
-          setEmg(Object.fromEntries(rows.map((row) => [row.id, row.emg_stats?.total_recordings || 0])));
-        }
+        const emgRows = await masterApiGet<{ id: string; emg_stats?: { total_recordings: number } }[]>("/api/master/data/emg/rehab-modules", { validate: (value): value is { id: string; emg_stats?: { total_recordings: number } }[] => Array.isArray(value), retries: 1 });
+        setEmg(Object.fromEntries(emgRows.map((row) => [row.id, row.emg_stats?.total_recordings || 0])));
       }
     } catch (cause) {
-      setModules([]);
-      setError(cause instanceof Error ? cause.message : "Posture datasets could not be loaded.");
+      setError(apiErrorMessage(cause));
     } finally {
       setLoading(false);
     }
@@ -39,10 +35,10 @@ export function RehabModuleCards({ destination }: { destination: "collection" | 
   useEffect(() => { void load(); }, [load]);
 
   if (loading) return <div className="module-loading" role="status"><i/><i/><span>Loading posture datasets…</span></div>;
-  if (error) return <div className="module-load-error" role="alert"><div><strong>Could not load posture datasets</strong><span>{error}</span></div><button onClick={load}><RefreshCw/>Retry</button></div>;
+  if (error && !modules.length) return <div className="module-load-error" role="alert"><div><strong>Could not load posture datasets</strong><span>{error}</span></div><button onClick={load}><RefreshCw/>Retry</button></div>;
   if (!modules.length) return <div className="master-empty">No posture datasets are configured.</div>;
 
-  return <div className="module-grid">
+  return <>{error && <div className="module-load-error" role="status"><div><strong>Showing previously loaded datasets</strong><span>{error}</span></div><button onClick={load}><RefreshCw/>Retry</button></div>}<div className="module-grid">
     {modules.map((module, index) => {
       const Icon = icons[index % icons.length];
       const unassigned = module.id === "UNASSIGNED";
@@ -61,7 +57,7 @@ export function RehabModuleCards({ destination }: { destination: "collection" | 
         </div>
       </article>;
     })}
-  </div>;
+  </div></>;
 }
 
 function ModuleActions({ module, destination, unassigned }: { module: RehabModule; destination: "collection" | "dataset"; unassigned: boolean }) {
