@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, os
+import asyncio, csv, os
 from fastapi import (
     APIRouter,
     Depends,
@@ -9,6 +9,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from .schemas import (
     BaselineRepeatabilityRequest,
     BaselineRequest,
@@ -98,6 +99,37 @@ def cloud_recordings(dataset_id: str = ""):
         return cloud_vault.list_recordings(dataset_id)
     except SupabaseVaultError as exc:
         raise HTTPException(503, "EMG cloud vault is unavailable") from exc
+
+
+@router.get("/cloud-recordings/{rid}")
+def cloud_recording(rid: str):
+    try:
+        return cloud_vault.get_recording(rid)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "EMG cloud recording not found") from exc
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud vault is unavailable") from exc
+
+
+@router.get("/cloud-recordings/{rid}/waveform")
+def cloud_recording_waveform(rid: str, max_points: int = 2000):
+    try:
+        return cloud_vault.waveform(rid, max_points)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Raw EMG waveform not found") from exc
+    except (UnicodeError, csv.Error, SupabaseVaultError) as exc:
+        raise HTTPException(503, "Stored EMG waveform could not be decoded") from exc
+
+
+@router.get("/cloud-recordings/{rid}/artifacts/{artifact_id}")
+def cloud_recording_artifact(rid: str, artifact_id: str, range: str = Header(default="")):
+    try:
+        content, status_code, headers = cloud_vault.read_artifact(rid, artifact_id, range)
+        return Response(content=content, status_code=status_code, headers=headers)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "EMG artifact not found") from exc
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud artifact is unavailable") from exc
 
 
 @router.get("/commissioning/runs")

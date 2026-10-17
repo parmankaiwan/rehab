@@ -18,11 +18,13 @@ type Dataset = {
   channel_count: number;
   last_recording_at?: string;
 };
+type Recording = { recording_id: string; dataset_id: string; research_label: string; subject_code: string; duration_seconds: number; channel_count: number; review_status: string; persistence_status: string; created_at: string };
 
 const endpoint = "/api/master/data/emg/datasets";
 
 export function EmgCloudDatasetVault() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -31,11 +33,12 @@ export function EmgCloudDatasetVault() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(endpoint, { cache: "no-store" });
-      const payload = await response.json().catch(() => ({}));
+      const [response, recordingResponse] = await Promise.all([fetch(endpoint, { cache: "no-store" }), fetch("/api/master/data/emg/cloud-recordings", { cache: "no-store" })]);
+      const [payload, recordingPayload] = await Promise.all([response.json().catch(() => ({})), recordingResponse.json().catch(() => ({}))]);
       if (!response.ok) throw new Error(payload.detail || payload.error || `Dataset request failed (${response.status})`);
-      if (!Array.isArray(payload)) throw new Error("EMG dataset response has an invalid shape");
-      setDatasets(payload);
+      if (!recordingResponse.ok) throw new Error(recordingPayload.detail || recordingPayload.error || `Recording request failed (${recordingResponse.status})`);
+      if (!Array.isArray(payload) || !Array.isArray(recordingPayload)) throw new Error("EMG vault response has an invalid shape");
+      setDatasets(payload); setRecordings(recordingPayload);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "EMG cloud vault is unavailable");
     } finally {
@@ -68,5 +71,6 @@ export function EmgCloudDatasetVault() {
       <dl><div><dt>Recordings</dt><dd>{dataset.recording_count}</dd></div><div><dt>Channels</dt><dd>{dataset.channel_count || "—"}</dd></div><div><dt>Approved</dt><dd>{dataset.approved_count}</dd></div></dl>
       <Link href="/master/emg">Collect more data</Link>
     </article>)}</div> : !error && <p>No durable EMG datasets exist yet. Create one from EMG Collection.</p>}
+    {recordings.length > 0 && <div className="emgc-table-card"><div><span className="eyebrow">Stored waveforms</span><h2>Recent cloud EMG recordings</h2></div><table><thead><tr><th>Recording</th><th>Dataset / label</th><th>Subject</th><th>Signal</th><th>Status</th><th /></tr></thead><tbody>{recordings.map((recording) => <tr key={recording.recording_id}><td>{recording.recording_id}</td><td>{datasets.find((dataset) => dataset.dataset_id === recording.dataset_id)?.name || recording.dataset_id}<small>{recording.research_label}</small></td><td>{recording.subject_code}</td><td>{recording.channel_count} ch · {recording.duration_seconds.toFixed(1)}s</td><td>{recording.review_status}</td><td><Link href={`/master/dataset/emg/${recording.recording_id}`}>Open waveform</Link></td></tr>)}</tbody></table></div>}
   </section>;
 }

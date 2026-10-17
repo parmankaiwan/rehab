@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import csv
+import io
 import json
 import mimetypes
 import re
@@ -185,6 +187,50 @@ class EmgCloudVault:
             response = client.get("/rest/v1/flexmap_emg_recordings", params=params)
             self._raise(response, "EMG recording list")
             return response.json()
+
+    def get_recording(self, recording_id: str) -> dict[str, Any]:
+        with self._client() as client:
+            response = client.get("/rest/v1/flexmap_emg_recordings", params={"select": "*", "recording_id": f"eq.{recording_id}", "limit": "1"})
+            self._raise(response, "EMG recording lookup")
+            rows = response.json()
+            if not rows:
+                raise FileNotFoundError(recording_id)
+            artifacts = client.get("/rest/v1/flexmap_emg_artifacts", params={"select": "artifact_id,artifact_role,object_path,content_type,byte_size,sha256,processing_version", "recording_id": f"eq.{recording_id}", "order": "created_at.asc"})
+            self._raise(artifacts, "EMG artifact list")
+        return {**rows[0], "artifacts": artifacts.json()}
+
+    def read_artifact(self, recording_id: str, artifact_id: str, range_header: str = "") -> tuple[bytes, int, dict[str, str]]:
+        with self._client() as client:
+            index = client.get("/rest/v1/flexmap_emg_artifacts", params={"select": "object_path,content_type", "recording_id": f"eq.{recording_id}", "artifact_id": f"eq.{artifact_id}", "limit": "1"})
+            self._raise(index, "EMG artifact lookup")
+            rows = index.json()
+            if not rows:
+                raise FileNotFoundError(artifact_id)
+            headers = {"Range": range_header} if range_header else {}
+            data = client.get(f"/storage/v1/object/authenticated/{quote(self.config.emg_bucket, safe='')}/{quote(rows[0]['object_path'], safe='/')}", headers=headers)
+            self._raise(data, "EMG artifact read")
+        forwarded = {name: value for name in ("content-type", "content-range", "accept-ranges", "content-length") if (value := data.headers.get(name))}
+        forwarded.setdefault("content-type", rows[0]["content_type"])
+        return data.content, data.status_code, forwarded
+
+    def waveform(self, recording_id: str, max_points: int = 2000) -> dict[str, Any]:
+        detail = self.get_recording(recording_id)
+        raw = next((item for item in detail["artifacts"] if item["object_path"].endswith("/emg_raw.csv")), None)
+        if not raw:
+            raise FileNotFoundError("emg_raw.csv")
+        if int(raw.get("byte_size") or 0) > 50 * 1024 * 1024:
+            raise SupabaseVaultError("Raw EMG artifact exceeds the bounded waveform viewer limit")
+        content, _, _ = self.read_artifact(recording_id, str(raw["artifact_id"]))
+        rows = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
+        limit = max(1, min(max_points, 5000))
+        stride = max(1, (len(rows) + limit - 1) // limit)
+        return {
+            "recording_id": recording_id,
+            "raw_units": detail.get("signal_units") or "ADC_COUNTS",
+            "sample_rate_hz": detail.get("sample_rate_hz"),
+            "duration_seconds": detail.get("duration_seconds"),
+            "samples": rows[::stride][:limit],
+        }
 
     def save_recording(self, record: dict[str, Any], recording_path: Path) -> dict[str, Any]:
         dataset_id = record.get("dataset_id") or (record.get("metadata") or {}).get("dataset_id")
