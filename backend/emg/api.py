@@ -28,7 +28,7 @@ from ..dataset_config import dataset_settings
 from ..master_dataset_api import require_master
 from ..data_backend import data_backend_mode
 from ..supabase_vault import SupabaseVaultError
-from .cloud_vault import EmgCloudVault, EmgDatasetCreate, EmgLabelCreate
+from .cloud_vault import EmgCloudVault, EmgDatasetCreate, EmgLabelCreate, EmgRecordingUpdate
 
 service = EmgService(dataset_settings())
 cloud_vault = EmgCloudVault()
@@ -109,6 +109,38 @@ def cloud_recording(rid: str):
         raise HTTPException(404, "EMG cloud recording not found") from exc
     except SupabaseVaultError as exc:
         raise HTTPException(503, "EMG cloud vault is unavailable") from exc
+
+
+@router.patch("/cloud-recordings/{rid}")
+def cloud_recording_update(rid: str, request: EmgRecordingUpdate):
+    try:
+        return cloud_vault.update_recording(rid, request)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "EMG cloud recording not found") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud recording review could not be saved") from exc
+
+
+@router.post("/cloud-recordings/{rid}/trash")
+def cloud_recording_trash(rid: str):
+    try:
+        return cloud_vault.set_recording_trashed(rid, True)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "EMG cloud recording not found") from exc
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud recording could not be moved to trash") from exc
+
+
+@router.post("/cloud-recordings/{rid}/restore")
+def cloud_recording_restore(rid: str):
+    try:
+        return cloud_vault.set_recording_trashed(rid, False)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "EMG cloud recording not found") from exc
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud recording could not be restored") from exc
 
 
 @router.get("/cloud-recordings/{rid}/waveform")

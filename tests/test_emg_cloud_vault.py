@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from backend.emg.cloud_vault import EmgCloudVault, EmgDatasetCreate
+from backend.emg.cloud_vault import EmgCloudVault, EmgDatasetCreate, EmgRecordingUpdate
 from backend.supabase_vault import SupabaseVaultConfig
 
 
@@ -162,3 +162,75 @@ def test_cloud_only_recording_reopens_waveform_and_preserves_byte_range():
     assert [row["channel_1"] for row in waveform["samples"]] == ["100", "90"]
     assert status == 206 and content == csv_bytes[:10]
     assert headers["content-range"].startswith("bytes 0-9/")
+
+
+def test_emg_relabel_approval_and_training_eligibility_are_audited():
+    current = {
+        "recording_id": "EMG-review",
+        "dataset_id": "EDS-one",
+        "research_label": "rest",
+        "review_status": "REVIEW_REQUIRED",
+        "training_eligible": False,
+        "excluded": False,
+        "revision": 2,
+        "artifacts": [{"artifact_id": "artifact-1"}],
+    }
+    audits: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("flexmap_emg_labels"):
+            return httpx.Response(200, json=[{"label_id": "ELB-active", "name": "active"}])
+        if request.method == "PATCH" and path.endswith("flexmap_emg_recordings"):
+            return httpx.Response(200, json=[{**current, **json.loads(request.content)}])
+        if request.method == "POST" and path.endswith("flexmap_emg_review_audit"):
+            audits.append(json.loads(request.content))
+            return httpx.Response(201)
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    vault = EmgCloudVault(config(), transport=httpx.MockTransport(handler))
+    vault.get_recording = lambda _recording_id: current
+    result = vault.update_recording(
+        "EMG-review",
+        EmgRecordingUpdate(research_label="active", review_status="APPROVED", review_notes="clean", training_eligible=True),
+    )
+
+    assert result["research_label"] == "active"
+    assert result["label_id"] == "ELB-active"
+    assert result["training_eligible"] is True
+    assert result["revision"] == 3
+    assert result["artifacts"] == current["artifacts"]
+    assert audits[0]["action"] == "RELABELLED"
+
+
+def test_emg_rejection_and_trash_force_exclusion_and_are_audited():
+    current = {
+        "recording_id": "EMG-reject",
+        "dataset_id": "EDS-one",
+        "research_label": "rest",
+        "review_status": "APPROVED",
+        "training_eligible": True,
+        "excluded": False,
+        "revision": 1,
+        "trashed_at": None,
+        "artifacts": [],
+    }
+    actions: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "PATCH" and path.endswith("flexmap_emg_recordings"):
+            return httpx.Response(200, json=[{**current, **json.loads(request.content)}])
+        if request.method == "POST" and path.endswith("flexmap_emg_review_audit"):
+            actions.append(json.loads(request.content)["action"])
+            return httpx.Response(201)
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    vault = EmgCloudVault(config(), transport=httpx.MockTransport(handler))
+    vault.get_recording = lambda _recording_id: current
+    rejected = vault.update_recording("EMG-reject", EmgRecordingUpdate(review_status="REJECTED"))
+    trashed = vault.set_recording_trashed("EMG-reject", True)
+
+    assert rejected["excluded"] is True and rejected["training_eligible"] is False
+    assert trashed["trashed_at"] and trashed["training_eligible"] is False
+    assert actions == ["REVIEW_UPDATED", "TRASHED"]

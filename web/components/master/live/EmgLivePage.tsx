@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DEFAULT_EMG_GRAPH_SETTINGS, EmgChart } from '../emg/EmgChart';
 import { EmgGraphSetupDrawer } from '../emg/EmgGraphSetupDrawer';
@@ -43,7 +43,7 @@ export function EmgLivePage() {
     [setupOpen, setSetupOpen] = useState(false),
     [advanced, setAdvanced] = useState(false),
     [error, setError] = useState('');
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const [a, b] = await Promise.all([
         fetch(api + '/devices' + (advanced ? '?include_non_usb=true' : '')),
@@ -58,14 +58,14 @@ export function EmgLivePage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Backend connection lost');
     }
-  }
+  }, [advanced]);
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => {
       if (status?.connection_state !== 'STREAMING') void refresh();
     }, 2500);
     return () => clearInterval(timer);
-  }, [advanced, status?.connection_state]);
+  }, [status?.connection_state, refresh]);
   useEffect(() => {
     if (stream.status) setStatus(stream.status);
   }, [stream.status]);

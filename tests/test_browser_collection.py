@@ -9,6 +9,7 @@ from backend.browser_collection import (
     BrowserDatasetCreate,
     BrowserLabelCreate,
     BrowserSampleMetadata,
+    BrowserSampleUpdate,
 )
 from backend.supabase_vault import SupabaseVaultConfig, SupabaseVaultError
 
@@ -148,3 +149,63 @@ def test_legacy_cv_artifacts_remain_readable_after_bucket_separation():
         "/storage/v1/object/authenticated/flexmap-cv-vault/legacy/sample/image.jpg",
         "/storage/v1/object/authenticated/flexmap-dataset/legacy/sample/image.jpg",
     ]
+
+
+def test_cv_review_relabel_and_approval_write_persistent_audits():
+    current = {
+        "sample_id": "SMP-review",
+        "dataset_id": "DS-one",
+        "label_at_capture": "lean",
+        "reviewed_label": None,
+        "review_status": "REVIEW_REQUIRED",
+        "training_eligible": False,
+    }
+    audit_tables: list[str] = []
+
+    def handler(request: httpx.Request):
+        if request.method == "PATCH" and request.url.path.endswith("flexmap_browser_samples"):
+            return httpx.Response(200, json=[{**current, **json.loads(request.content)}])
+        if request.method == "POST" and request.url.path.endswith("flexmap_browser_label_audit"):
+            audit_tables.append("label")
+            return httpx.Response(201)
+        if request.method == "POST" and request.url.path.endswith("flexmap_cv_review_audit"):
+            body = json.loads(request.content)
+            assert body["action"] == "RELABELLED"
+            audit_tables.append("review")
+            return httpx.Response(201)
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    repository = BrowserCollectionRepository(config(), transport=httpx.MockTransport(handler))
+    repository.get_sample = lambda *_args, **_kwargs: current
+    result = repository.update_sample(
+        "SMP-review",
+        BrowserSampleUpdate(reviewed_label="aligned", review_status="APPROVED", training_eligible=True, notes="reviewed"),
+    )
+
+    assert result["review_status"] == "APPROVED"
+    assert result["training_eligible"] is True
+    assert result["reviewed_label"] == "aligned"
+    assert audit_tables == ["label", "review"]
+
+
+def test_cv_trash_and_restore_are_audited_and_disable_training():
+    current = {"sample_id": "SMP-trash", "training_eligible": True, "trashed_at": None}
+    actions: list[str] = []
+
+    def handler(request: httpx.Request):
+        body = json.loads(request.content)
+        if request.method == "PATCH":
+            assert body["training_eligible"] is False
+            return httpx.Response(200, json=[{**current, **body}])
+        if request.method == "POST":
+            actions.append(body["action"])
+            return httpx.Response(201)
+        raise AssertionError(request.url)
+
+    repository = BrowserCollectionRepository(config(), transport=httpx.MockTransport(handler))
+    repository.get_sample = lambda *_args, **_kwargs: current
+    trashed = repository.set_sample_trashed("SMP-trash", True)
+
+    assert trashed["trashed_at"]
+    assert trashed["training_eligible"] is False
+    assert actions == ["TRASHED"]

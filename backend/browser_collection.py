@@ -312,9 +312,14 @@ class BrowserCollectionRepository:
         if not current:
             raise FileNotFoundError(sample_id)
         values = update.model_dump(exclude_none=True)
+        if values.get("review_status") == "REJECTED":
+            values["training_eligible"] = False
+            values.setdefault("training_ineligibility_reason", "REJECTED_DURING_REVIEW")
+        elif values.get("training_eligible") is False:
+            values.setdefault("training_ineligibility_reason", "REVIEWER_EXCLUDED")
+        elif values.get("training_eligible") is True:
+            values["training_ineligibility_reason"] = None
         values["updated_at"] = self._now()
-        if values.get("training_eligible") is False and not values.get("training_ineligibility_reason"):
-            values["training_ineligibility_reason"] = "REVIEWER_EXCLUDED"
         with self._client() as client:
             response = client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{sample_id}"}, headers={"Prefer": "return=representation"}, json=values)
             self._raise(response, "sample update")
@@ -325,17 +330,47 @@ class BrowserCollectionRepository:
                 audit = {"sample_id": sample_id, "previous_label": current.get("reviewed_label") or current.get("label_at_capture"), "new_label": values["reviewed_label"], "changed_at": self._now()}
                 audit_response = client.post("/rest/v1/flexmap_browser_label_audit", json=audit)
                 self._raise(audit_response, "label audit")
+            review_audit = client.post(
+                "/rest/v1/flexmap_cv_review_audit",
+                json={
+                    "sample_id": sample_id,
+                    "action": "RELABELLED" if "reviewed_label" in values and values["reviewed_label"] != current.get("reviewed_label") else "REVIEW_UPDATED",
+                    "previous_value": {key: current.get(key) for key in values if key != "updated_at"},
+                    "new_value": {key: rows[0].get(key) for key in values if key != "updated_at"},
+                    "actor": "MASTER",
+                },
+            )
+            self._raise(review_audit, "CV review audit")
         return rows[0]
 
     def set_sample_trashed(self, sample_id: str, trashed: bool) -> dict[str, Any]:
-        if not self.get_sample(sample_id, include_trashed=True):
+        current = self.get_sample(sample_id, include_trashed=True)
+        if not current:
             raise FileNotFoundError(sample_id)
         now = self._now()
-        values = {"trashed_at": now if trashed else None, "updated_at": now}
+        values = {
+            "trashed_at": now if trashed else None,
+            "training_eligible": False if trashed else current.get("training_eligible", False),
+            "training_ineligibility_reason": "TRASHED" if trashed else current.get("training_ineligibility_reason"),
+            "updated_at": now,
+        }
         with self._client() as client:
             response = client.patch("/rest/v1/flexmap_browser_samples", params={"sample_id": f"eq.{sample_id}"}, headers={"Prefer": "return=representation"}, json=values)
             self._raise(response, "sample trash update")
             rows = response.json()
+            if not rows:
+                raise FileNotFoundError(sample_id)
+            audit_response = client.post(
+                "/rest/v1/flexmap_cv_review_audit",
+                json={
+                    "sample_id": sample_id,
+                    "action": "TRASHED" if trashed else "RESTORED",
+                    "previous_value": {"trashed_at": current.get("trashed_at")},
+                    "new_value": {"trashed_at": values["trashed_at"]},
+                    "actor": "MASTER",
+                },
+            )
+            self._raise(audit_response, "CV trash audit")
         return rows[0]
 
     def save_sample(self, metadata: BrowserSampleMetadata, artifacts: list[ArtifactUpload], idempotency_key: str) -> dict[str, Any]:

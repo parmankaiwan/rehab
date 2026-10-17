@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useEmgStream } from '@/hooks/useEmgStream';
 import type { EmgModule, EmgStatus, HardwareProfile } from '@/types/emg';
 import type { EmgSerialDevice } from '@/types/emgDevice';
@@ -57,6 +57,18 @@ export function EmgDashboard({ slug }: { slug: string }) {
     [record, setRecord] = useState<RecordState>({ state: 'IDLE' }),
     [error, setError] = useState('');
   const stream = useEmgStream(true);
+  const refresh = useCallback(async () => {
+    const [a, b] = await Promise.all([
+      fetch(`${api}/devices${advancedPorts ? '?include_non_usb=true' : ''}`),
+      fetch(`${api}/status`),
+    ]);
+    if (a.ok) {
+      const x = await a.json();
+      setDevices(x);
+      setPort((current) => x.some((device: EmgSerialDevice) => device.port === current) ? current : '');
+    }
+    if (b.ok) setStatus(await b.json());
+  }, [advancedPorts]);
   useEffect(() => {
     fetch(`${api}/rehab-modules`)
       .then((r) => r.json())
@@ -80,7 +92,7 @@ export function EmgDashboard({ slug }: { slug: string }) {
         }
       });
     refresh();
-  }, [slug]);
+  }, [slug, refresh]);
   useEffect(() => {
     if (stream.status) setStatus(stream.status);
   }, [stream.status]);
@@ -98,7 +110,7 @@ export function EmgDashboard({ slug }: { slug: string }) {
     if (mock || status?.connection_state === 'STREAMING') return;
     const timer = setInterval(() => void refresh(), 2500);
     return () => clearInterval(timer);
-  }, [mock, advancedPorts, status?.connection_state]);
+  }, [mock, status?.connection_state, refresh]);
   useEffect(() => {
     if (port) return;
     const profile = profiles.find((item) => item.hardware_profile_id === hardwareProfile);
@@ -111,18 +123,6 @@ export function EmgDashboard({ slug }: { slug: string }) {
     );
     if (matches.length === 1) setPort(matches[0].port);
   }, [devices, hardwareProfile, profiles, port]);
-  async function refresh() {
-    const [a, b] = await Promise.all([
-      fetch(`${api}/devices${advancedPorts ? '?include_non_usb=true' : ''}`),
-      fetch(`${api}/status`),
-    ]);
-    if (a.ok) {
-      const x = await a.json();
-      setDevices(x);
-      setPort((current) => x.some((device: EmgSerialDevice) => device.port === current) ? current : '');
-    }
-    if (b.ok) setStatus(await b.json());
-  }
   function activeChannels() {
     return Array.from(
       { length: channelCount },

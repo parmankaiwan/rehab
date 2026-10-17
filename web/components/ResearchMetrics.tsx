@@ -14,7 +14,7 @@ interface VideoMetrics {
   effective_queue_depth: number;
 }
 
-const format = (value: number | null | undefined, suffix = "") => value == null ? "â€”" : `${value.toFixed(1)}${suffix}`;
+const format = (value: number | null | undefined, suffix = "") => value == null ? "—" : `${value.toFixed(1)}${suffix}`;
 
 export function ResearchMetrics({ snapshot, stale }: { snapshot: PostureSnapshot | null; stale: boolean }) {
   const [metrics, setMetrics] = useState<VideoMetrics | null>(null);
@@ -35,10 +35,10 @@ export function ResearchMetrics({ snapshot, stale }: { snapshot: PostureSnapshot
   const dataAge = snapshot ? now - snapshot.timestamp * 1000 : null;
   const items = [
     ["CV FPS", format(snapshot?.fps)], ["Pose rate", format(snapshot?.fps, " Hz")],
-    ["Hand target", snapshot?.fps ? format(snapshot.fps / 2, " Hz") : "â€”"],
+    ["Hand target", snapshot?.fps ? format(snapshot.fps / 2, " Hz") : "—"],
     ["Frame receive", format(metrics?.frame_receive_fps, " FPS")], ["JPEG encode", format(metrics?.jpeg_encode_ms, " ms")],
     ["Source age", format(metrics?.source_frame_age_ms, " ms")], ["Backend age", format(metrics?.backend_frame_age_ms, " ms")],
-    ["WebSocket age", format(dataAge, " ms")], ["Frame sequence", metrics?.frame_sequence?.toString() ?? "â€”"],
+    ["WebSocket age", format(dataAge, " ms")], ["Frame sequence", metrics?.frame_sequence?.toString() ?? "—"],
     ["WebRTC clients", metrics?.webrtc_clients?.toString() ?? "0"], ["Video queue", metrics?.effective_queue_depth?.toString() ?? "0"],
     ["Data", stale ? "STALE" : "CURRENT"],
   ];

@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..supabase_vault import SupabaseVaultConfig, SupabaseVaultError
 
@@ -60,6 +60,35 @@ class EmgLabelCreate(BaseModel):
         if not SAFE_LABEL.fullmatch(normalized):
             raise ValueError("Label ID must use lowercase letters, numbers, and underscores")
         return normalized
+
+
+class EmgRecordingUpdate(BaseModel):
+    research_label: str | None = Field(default=None, min_length=2, max_length=64)
+    review_status: str | None = Field(default=None, pattern=r"^(REVIEW_REQUIRED|REVIEWED|APPROVED|REJECTED)$")
+    review_notes: str | None = Field(default=None, max_length=2000)
+    training_eligible: bool | None = None
+    excluded: bool | None = None
+    exclusion_reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("research_label")
+    @classmethod
+    def normalize_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower().replace(" ", "_").replace("-", "_")
+        if not SAFE_LABEL.fullmatch(normalized):
+            raise ValueError("Label ID must use lowercase letters, numbers, and underscores")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_review(self):
+        if all(value is None for value in self.model_dump().values()):
+            raise ValueError("No recording update supplied")
+        if self.training_eligible and self.review_status != "APPROVED":
+            raise ValueError("Only approved recordings may be training eligible")
+        if self.training_eligible and self.excluded:
+            raise ValueError("Excluded recordings cannot be training eligible")
+        return self
 
 
 class EmgCloudVault:
@@ -198,6 +227,104 @@ class EmgCloudVault:
             artifacts = client.get("/rest/v1/flexmap_emg_artifacts", params={"select": "artifact_id,artifact_role,object_path,content_type,byte_size,sha256,processing_version", "recording_id": f"eq.{recording_id}", "order": "created_at.asc"})
             self._raise(artifacts, "EMG artifact list")
         return {**rows[0], "artifacts": artifacts.json()}
+
+    def update_recording(self, recording_id: str, update: EmgRecordingUpdate) -> dict[str, Any]:
+        current = self.get_recording(recording_id)
+        values = update.model_dump(exclude_none=True)
+        action = "REVIEW_UPDATED"
+        with self._client() as client:
+            if update.research_label is not None and update.research_label != current.get("research_label"):
+                labels = client.get(
+                    "/rest/v1/flexmap_emg_labels",
+                    params={
+                        "select": "label_id,name",
+                        "dataset_id": f"eq.{current['dataset_id']}",
+                        "name": f"eq.{update.research_label}",
+                        "archived": "eq.false",
+                        "limit": "1",
+                    },
+                )
+                self._raise(labels, "EMG review label lookup")
+                label_rows = labels.json()
+                if not label_rows:
+                    raise ValueError("The reviewed label is not defined in this EMG dataset")
+                values["label_id"] = label_rows[0]["label_id"]
+                action = "RELABELLED"
+            effective_status = values.get("review_status", current.get("review_status"))
+            effective_excluded = values.get("excluded", current.get("excluded", False))
+            effective_eligible = values.get("training_eligible", current.get("training_eligible", False))
+            if effective_status == "REJECTED":
+                effective_eligible = False
+                effective_excluded = True
+            if effective_eligible and effective_status != "APPROVED":
+                raise ValueError("Only approved recordings may be training eligible")
+            if effective_eligible and effective_excluded:
+                raise ValueError("Excluded recordings cannot be training eligible")
+            if effective_status == "REJECTED":
+                values.update({"training_eligible": False, "excluded": True})
+                values.setdefault("exclusion_reason", "REJECTED_DURING_REVIEW")
+            elif effective_excluded:
+                values["training_eligible"] = False
+                values.setdefault("exclusion_reason", "REVIEWER_EXCLUDED")
+            elif values.get("excluded") is False:
+                values["exclusion_reason"] = None
+            values["revision"] = int(current.get("revision") or 1) + 1
+            values["updated_at"] = utcnow()
+            response = client.patch(
+                "/rest/v1/flexmap_emg_recordings",
+                params={"recording_id": f"eq.{recording_id}"},
+                headers={"Prefer": "return=representation"},
+                json=values,
+            )
+            self._raise(response, "EMG recording review update")
+            rows = response.json()
+            if not rows:
+                raise FileNotFoundError(recording_id)
+            audit = client.post(
+                "/rest/v1/flexmap_emg_review_audit",
+                json={
+                    "recording_id": recording_id,
+                    "action": action,
+                    "previous_value": {key: current.get(key) for key in values if key not in {"updated_at"}},
+                    "new_value": {key: rows[0].get(key) for key in values if key not in {"updated_at"}},
+                    "actor": "MASTER",
+                },
+            )
+            self._raise(audit, "EMG review audit")
+        return {**rows[0], "artifacts": current.get("artifacts", [])}
+
+    def set_recording_trashed(self, recording_id: str, trashed: bool) -> dict[str, Any]:
+        current = self.get_recording(recording_id)
+        now = utcnow()
+        values = {
+            "trashed_at": now if trashed else None,
+            "training_eligible": False if trashed else current.get("training_eligible", False),
+            "revision": int(current.get("revision") or 1) + 1,
+            "updated_at": now,
+        }
+        with self._client() as client:
+            response = client.patch(
+                "/rest/v1/flexmap_emg_recordings",
+                params={"recording_id": f"eq.{recording_id}"},
+                headers={"Prefer": "return=representation"},
+                json=values,
+            )
+            self._raise(response, "EMG recording trash update")
+            rows = response.json()
+            if not rows:
+                raise FileNotFoundError(recording_id)
+            audit = client.post(
+                "/rest/v1/flexmap_emg_review_audit",
+                json={
+                    "recording_id": recording_id,
+                    "action": "TRASHED" if trashed else "RESTORED",
+                    "previous_value": {"trashed_at": current.get("trashed_at")},
+                    "new_value": {"trashed_at": values["trashed_at"]},
+                    "actor": "MASTER",
+                },
+            )
+            self._raise(audit, "EMG trash audit")
+        return {**rows[0], "artifacts": current.get("artifacts", [])}
 
     def read_artifact(self, recording_id: str, artifact_id: str, range_header: str = "") -> tuple[bytes, int, dict[str, str]]:
         with self._client() as client:

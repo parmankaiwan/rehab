@@ -19,6 +19,24 @@ do $$ begin
   end if;
 end $$;
 alter table public.flexmap_browser_samples validate constraint flexmap_browser_samples_cv_only;
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'flexmap_browser_samples_review_status'
+  ) then
+    alter table public.flexmap_browser_samples
+      add constraint flexmap_browser_samples_review_status
+      check (review_status in ('REVIEW_REQUIRED','REVIEWED','APPROVED','REJECTED')) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conname = 'flexmap_browser_samples_training_reviewed'
+  ) then
+    alter table public.flexmap_browser_samples
+      add constraint flexmap_browser_samples_training_reviewed
+      check (not training_eligible or (review_status = 'APPROVED' and trashed_at is null)) not valid;
+  end if;
+end $$;
+alter table public.flexmap_browser_samples validate constraint flexmap_browser_samples_review_status;
+alter table public.flexmap_browser_samples validate constraint flexmap_browser_samples_training_reviewed;
 
 create table if not exists public.flexmap_cv_review_audit (
   audit_id bigint generated always as identity primary key,
@@ -84,6 +102,7 @@ create table if not exists public.flexmap_emg_recordings (
   persistence_status text not null default 'DRAFT'
     check (persistence_status in ('DRAFT','UPLOADING','VERIFYING','STORED','FAILED','INTERRUPTED')),
   review_status text not null default 'REVIEW_REQUIRED',
+  review_notes text not null default '',
   training_eligible boolean not null default false,
   excluded boolean not null default false,
   exclusion_reason text,
@@ -98,6 +117,25 @@ create table if not exists public.flexmap_emg_recordings (
   verified_at timestamptz,
   trashed_at timestamptz
 );
+
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'flexmap_emg_recordings_review_status'
+  ) then
+    alter table public.flexmap_emg_recordings
+      add constraint flexmap_emg_recordings_review_status
+      check (review_status in ('REVIEW_REQUIRED','REVIEWED','APPROVED','REJECTED')) not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conname = 'flexmap_emg_recordings_training_reviewed'
+  ) then
+    alter table public.flexmap_emg_recordings
+      add constraint flexmap_emg_recordings_training_reviewed
+      check (not training_eligible or (review_status = 'APPROVED' and not excluded and trashed_at is null)) not valid;
+  end if;
+end $$;
+alter table public.flexmap_emg_recordings validate constraint flexmap_emg_recordings_review_status;
+alter table public.flexmap_emg_recordings validate constraint flexmap_emg_recordings_training_reviewed;
 
 create table if not exists public.flexmap_emg_artifacts (
   artifact_id uuid primary key default gen_random_uuid(),
@@ -130,6 +168,8 @@ create index if not exists flexmap_emg_recordings_dataset_idx on public.flexmap_
 create index if not exists flexmap_emg_recordings_subject_idx on public.flexmap_emg_recordings(subject_code, session_id);
 create index if not exists flexmap_emg_recordings_review_idx on public.flexmap_emg_recordings(review_status, training_eligible) where trashed_at is null;
 create index if not exists flexmap_emg_artifacts_recording_idx on public.flexmap_emg_artifacts(recording_id);
+create index if not exists flexmap_cv_review_audit_sample_idx on public.flexmap_cv_review_audit(sample_id, occurred_at desc);
+create index if not exists flexmap_emg_review_audit_recording_idx on public.flexmap_emg_review_audit(recording_id, occurred_at desc);
 
 alter table public.flexmap_cv_review_audit enable row level security;
 alter table public.flexmap_emg_datasets enable row level security;
