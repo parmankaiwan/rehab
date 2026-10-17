@@ -310,6 +310,18 @@ class EmgCloudVault:
                     with path.open("rb") as source:
                         upload = client.post(f"/storage/v1/object/{quote(self.config.emg_bucket, safe='')}/{quote(object_path, safe='/')}", headers={"Content-Type": content_type, "x-upsert": "true"}, content=source)
                     self._raise(upload, f"EMG artifact upload ({path.name})")
+                    # Confirm remote bytes before claiming durable, verified storage.
+                    with client.stream("GET", f"/storage/v1/object/authenticated/{quote(self.config.emg_bucket, safe='')}/{quote(object_path, safe='/')}") as verified:
+                        if not verified.is_success:
+                            verified.read()
+                            self._raise(verified, "EMG artifact verification")
+                        remote_digest = hashlib.sha256()
+                        remote_size = 0
+                        for chunk in verified.iter_bytes():
+                            remote_digest.update(chunk)
+                            remote_size += len(chunk)
+                    if remote_size != path.stat().st_size or remote_digest.hexdigest() != digest.hexdigest():
+                        raise SupabaseVaultError("EMG artifact verification failed")
                     artifact = {"name": relative, "object_path": object_path, "content_type": content_type, "size_bytes": path.stat().st_size, "sha256": digest.hexdigest(), "verification_status": "VERIFIED"}
                     index = client.post("/rest/v1/flexmap_emg_artifacts", params={"on_conflict": "object_path"}, headers={"Prefer": "resolution=merge-duplicates"}, json={"recording_id": recording_id, "artifact_role": folder.upper() + ":" + relative, "object_path": object_path, "content_type": content_type, "byte_size": artifact["size_bytes"], "sha256": artifact["sha256"], "verification_status": "VERIFIED", "verified_at": utcnow()})
                     self._raise(index, "EMG artifact index")

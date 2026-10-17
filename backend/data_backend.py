@@ -59,6 +59,24 @@ class StorageStatusService:
 
                 migration = client.get("/rest/v1/flexmap_schema_migrations", params={"select": "version", "version": f"eq.{REQUIRED_SCHEMA_VERSION}", "limit": "1"})
                 schema_ok = migration.is_success and bool(migration.json())
+                # Migration history alone cannot prove the deployed schema is usable.
+                for table, key in (
+                    ("flexmap_browser_labels", "label_id"),
+                    ("flexmap_browser_samples", "sample_id,persistence_status"),
+                    ("flexmap_recording_artifacts", "artifact_id"),
+                    ("flexmap_cv_review_audit", "audit_id"),
+                    ("flexmap_emg_datasets", "dataset_id"),
+                    ("flexmap_emg_labels", "label_id"),
+                    ("flexmap_emg_recordings", "recording_id,persistence_status"),
+                    ("flexmap_emg_artifacts", "artifact_id"),
+                    ("flexmap_emg_review_audit", "audit_id"),
+                ):
+                    probe = client.get(f"/rest/v1/{table}", params={"select": key, "limit": "0"})
+                    if probe.status_code in {401, 403}:
+                        return {**result, "state": "AUTHENTICATION_FAILED", "database": "AUTHENTICATION_FAILED"}
+                    if probe.status_code in {400, 404}:
+                        return {**result, "state": "MIGRATION_REQUIRED", "database": "CONNECTED", "schema": "MIGRATION_REQUIRED"}
+                    probe.raise_for_status()
 
                 bucket_states = []
                 for bucket_name in (self.config.cv_bucket, self.config.emg_bucket):

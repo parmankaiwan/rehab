@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from backend.emg.cloud_vault import EmgCloudVault, EmgDatasetCreate
 from backend.supabase_vault import SupabaseVaultConfig
@@ -45,16 +46,20 @@ def test_create_dataset_uses_emg_tables_and_normalizes_initial_label():
     assert all("browser" not in path and "cv_" not in path for path in paths)
 
 
-def test_recording_save_uses_private_emg_bucket_and_verified_state_machine(tmp_path: Path):
+@pytest.mark.parametrize("corrupt_remote", [False, True])
+def test_recording_save_uses_private_emg_bucket_and_verified_state_machine(tmp_path: Path, corrupt_remote):
     recording_dir = tmp_path / "synthetic-recording"
     recording_dir.mkdir()
     (recording_dir / "emg_raw.csv").write_text("timestamp_ms,channel_1\n0,100\n1,120\n", encoding="utf-8")
     (recording_dir / "metadata.json").write_text('{"fixture":true}', encoding="utf-8")
     transitions: list[str] = []
     uploads: list[str] = []
+    objects: dict[str, bytes] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if request.method == "GET" and path.startswith("/storage/v1/object/authenticated/"):
+            return httpx.Response(200, content=b"corrupt" if corrupt_remote else objects[path.replace("/authenticated/", "/")])
         if request.method == "GET" and path.endswith("flexmap_emg_datasets"):
             return httpx.Response(200, json=[{"dataset_id": "EDS-synthetic"}])
         if request.method == "GET" and path.endswith("flexmap_emg_labels"):
@@ -76,12 +81,14 @@ def test_recording_save_uses_private_emg_bucket_and_verified_state_machine(tmp_p
             return httpx.Response(201)
         if request.method == "POST" and path.startswith("/storage/v1/object/flexmap-emg-vault/"):
             uploads.append(path)
+            objects[path] = request.read()
             assert request.headers["x-upsert"] == "true"
             return httpx.Response(200)
         raise AssertionError(f"unexpected request {request.method} {request.url}")
 
     vault = EmgCloudVault(config(), transport=httpx.MockTransport(handler))
-    result = vault.save_recording(
+    def save():
+        return vault.save_recording(
         {
             "recording_id": "EMG-synthetic",
             "dataset_id": "EDS-synthetic",
@@ -96,6 +103,13 @@ def test_recording_save_uses_private_emg_bucket_and_verified_state_machine(tmp_p
         recording_dir,
     )
 
+    if corrupt_remote:
+        from backend.supabase_vault import SupabaseVaultError
+        with pytest.raises(SupabaseVaultError, match="verification failed"):
+            save()
+        assert transitions == ["DRAFT", "UPLOADING", "FAILED"]
+        return
+    result = save()
     assert transitions == ["DRAFT", "UPLOADING", "VERIFYING", "STORED"]
     assert result["persistence_status"] == "STORED"
     assert uploads

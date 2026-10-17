@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -18,7 +18,7 @@ class SupabaseVaultError(RuntimeError):
 @dataclass(frozen=True)
 class SupabaseVaultConfig:
     url: str = ""
-    secret_key: str = ""
+    secret_key: str = field(default="", repr=False)
     table: str = "flexmap_dataset_recordings"
     bucket: str = "flexmap-dataset"
     cv_bucket: str = "flexmap-cv-vault"

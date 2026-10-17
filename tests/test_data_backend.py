@@ -39,7 +39,21 @@ def test_supabase_status_performs_database_schema_and_private_bucket_checks(monk
     assert status["database"] == "CONNECTED"
     assert status["schema"] == "CURRENT"
     assert status["bucket"] == "CV_PRIVATE_EMG_PRIVATE"
-    assert len(paths) == 6
+    assert len(paths) == 15
+
+
+def test_migration_marker_does_not_hide_missing_emg_schema(monkeypatch):
+    monkeypatch.setenv("FLEXMAP_DATA_BACKEND", "supabase")
+
+    def handler(request):
+        if request.url.path.endswith("flexmap_schema_migrations"):
+            return httpx.Response(200, json=[{"version": "202610170001"}])
+        if request.url.path.endswith("flexmap_emg_datasets"):
+            return httpx.Response(404, json={"code": "PGRST205"})
+        return httpx.Response(200, json=[])
+
+    status = StorageStatusService(config(), transport=httpx.MockTransport(handler)).check()
+    assert status["state"] == "MIGRATION_REQUIRED"
 
 
 def test_database_failure_has_distinct_state(monkeypatch):

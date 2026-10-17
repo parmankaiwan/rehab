@@ -64,7 +64,7 @@ def browser_collection_status():
     if not browser_collections.config.secret_key:
         missing.append("FLEXMAP_SUPABASE_SECRET_KEY")
     ready = status["state"] == "READY"
-    return {**status, "configured": ready, "enabled": ready, "missing": missing, "bucket_state": status["bucket"], "bucket": browser_collections.config.bucket, "durability": "SUPABASE_PRIVATE" if ready else status["state"]}
+    return {**status, "configured": ready, "enabled": ready, "missing": missing, "bucket_state": status["bucket"], "bucket": browser_collections.config.cv_bucket, "durability": "SUPABASE_PRIVATE" if ready else status["state"]}
 
 
 @router.get("/storage/status", dependencies=protected)
