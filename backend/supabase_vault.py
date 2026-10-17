@@ -21,6 +21,8 @@ class SupabaseVaultConfig:
     secret_key: str = ""
     table: str = "flexmap_dataset_recordings"
     bucket: str = "flexmap-dataset"
+    cv_bucket: str = "flexmap-cv-vault"
+    emg_bucket: str = "flexmap-emg-vault"
     enabled: bool = False
     upload_artifacts: bool = False
     timeout_seconds: float = 20.0
@@ -39,6 +41,8 @@ class SupabaseVaultConfig:
                 "FLEXMAP_SUPABASE_VAULT_TABLE", "flexmap_dataset_recordings"
             ),
             bucket=os.getenv("FLEXMAP_SUPABASE_VAULT_BUCKET", "flexmap-dataset"),
+            cv_bucket=os.getenv("FLEXMAP_SUPABASE_CV_BUCKET", "flexmap-cv-vault"),
+            emg_bucket=os.getenv("FLEXMAP_SUPABASE_EMG_BUCKET", "flexmap-emg-vault"),
             enabled=os.getenv("FLEXMAP_SUPABASE_SYNC_ENABLED", "false").lower()
             == "true",
             upload_artifacts=os.getenv(
@@ -78,7 +82,7 @@ class SupabaseVaultConfig:
             raise SupabaseVaultError(
                 "Supabase URL must use HTTPS (HTTP is allowed only for localhost)"
             )
-        for name, value in (("table", self.table), ("bucket", self.bucket)):
+        for name, value in (("table", self.table), ("bucket", self.bucket), ("cv_bucket", self.cv_bucket), ("emg_bucket", self.emg_bucket)):
             if not value or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for character in value):
                 raise SupabaseVaultError(f"Invalid Supabase {name} name")
 

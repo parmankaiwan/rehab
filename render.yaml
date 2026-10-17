@@ -28,6 +28,10 @@ services:
         sync: false
       - key: FLEXMAP_SUPABASE_VAULT_BUCKET
         value: flexmap-dataset
+      - key: FLEXMAP_SUPABASE_CV_BUCKET
+        value: flexmap-cv-vault
+      - key: FLEXMAP_SUPABASE_EMG_BUCKET
+        value: flexmap-emg-vault
 
   - type: web
     name: flexmap-rehab-web-parmankaiwan

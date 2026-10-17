@@ -9,7 +9,7 @@ import httpx
 
 from .supabase_vault import SupabaseVaultConfig, SupabaseVaultError
 
-REQUIRED_SCHEMA_VERSION = "202610160001"
+REQUIRED_SCHEMA_VERSION = "202610170001"
 
 
 def data_backend_mode() -> str:
@@ -60,25 +60,29 @@ class StorageStatusService:
                 migration = client.get("/rest/v1/flexmap_schema_migrations", params={"select": "version", "version": f"eq.{REQUIRED_SCHEMA_VERSION}", "limit": "1"})
                 schema_ok = migration.is_success and bool(migration.json())
 
-                bucket = client.get(f"/storage/v1/bucket/{quote(self.config.bucket, safe='')}")
-                if bucket.status_code == 404:
-                    bucket_state = "BUCKET_MISSING"
-                else:
-                    bucket.raise_for_status()
-                    bucket_state = "PRIVATE" if not bucket.json().get("public", False) else "PUBLIC_UNSAFE"
-
-                pending = client.get("/rest/v1/flexmap_browser_samples", params={"select": "sample_id", "persistence_status": "in.(DRAFT,UPLOADING,VERIFYING,FAILED,INTERRUPTED)", "limit": "1"}, headers={"Prefer": "count=exact"})
-                pending_count = 0
-                if pending.is_success:
-                    content_range = pending.headers.get("content-range", "")
-                    if "/" in content_range and content_range.rsplit("/", 1)[1].isdigit():
-                        pending_count = int(content_range.rsplit("/", 1)[1])
+                bucket_states = []
+                for bucket_name in (self.config.cv_bucket, self.config.emg_bucket):
+                    bucket = client.get(f"/storage/v1/bucket/{quote(bucket_name, safe='')}")
+                    if bucket.status_code == 404:
+                        bucket_states.append("MISSING")
                     else:
-                        pending_count = len(pending.json())
-        except (httpx.HTTPError, ValueError, SupabaseVaultError):
-            return {**result, "state": "UNREACHABLE", "database": "UNREACHABLE"}
+                        bucket.raise_for_status()
+                        bucket_states.append("PRIVATE" if not bucket.json().get("public", False) else "PUBLIC_UNSAFE")
+                bucket_state = "CV_PRIVATE_EMG_PRIVATE" if bucket_states == ["PRIVATE", "PRIVATE"] else "STORAGE_UNAVAILABLE"
 
-        state = "READY" if schema_ok and bucket_state == "PRIVATE" else ("MIGRATION_REQUIRED" if not schema_ok else "STORAGE_UNAVAILABLE")
+                pending_count = 0
+                for table, key in (("flexmap_browser_samples", "sample_id"), ("flexmap_emg_recordings", "recording_id")):
+                    pending = client.get(f"/rest/v1/{table}", params={"select": key, "persistence_status": "in.(DRAFT,UPLOADING,VERIFYING,FAILED,INTERRUPTED)", "limit": "1"}, headers={"Prefer": "count=exact"})
+                    if pending.is_success:
+                        content_range = pending.headers.get("content-range", "")
+                        if "/" in content_range and content_range.rsplit("/", 1)[1].isdigit():
+                            pending_count += int(content_range.rsplit("/", 1)[1])
+                        else:
+                            pending_count += len(pending.json())
+        except (httpx.HTTPError, ValueError, SupabaseVaultError):
+            return {**result, "state": "DATABASE_UNAVAILABLE", "database": "UNREACHABLE"}
+
+        state = "READY" if schema_ok and bucket_state == "CV_PRIVATE_EMG_PRIVATE" else ("MIGRATION_REQUIRED" if not schema_ok else "STORAGE_UNAVAILABLE")
         if state == "READY":
             self.last_successful_check = checked_at
         return {**result, "state": state, "database": "CONNECTED", "schema": "CURRENT" if schema_ok else "MIGRATION_REQUIRED", "bucket": bucket_state, "pending_or_failed_uploads": pending_count, "last_successful_check": self.last_successful_check}

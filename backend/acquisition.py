@@ -12,7 +12,7 @@ from .dataset_models import RecordingConfiguration, RecordingState
 from .master_dataset_api import require_master, recorder, vault
 from .posture_stream import store as posture_store
 from .video_store import raw_video_store, video_store
-from .emg.api import service as emg_service
+from .emg.api import persist_saved_recording, service as emg_service
 from .emg.schemas import BaselineRequest as EmgBaselineRequest, RecordingMarkerRequest as EmgMarkerRequest, RecordingRequest as EmgRecordingRequest
 
 def utcnow(): return datetime.now(timezone.utc).isoformat()
@@ -33,7 +33,7 @@ class ProtocolCreate(BaseModel):
   if self.modality in {"CV","PAIRED"} and self.countdown_seconds not in {3,5}:raise ValueError("CV countdown_seconds must be 3 or 5")
   return self
 class CollectionCreate(BaseModel):
- study_id:Optional[str]=None;subject_id:str=ID;session_id:str=ID;protocol_id:str=ID;protocol_version:Optional[int]=Field(default=None,ge=1);affected_side:Literal["LEFT","RIGHT","UNKNOWN","N/A"]="UNKNOWN";consent_recorded:bool=False;hardware_profile_id:Optional[str]=None;hardware_profile_version:Optional[int]=Field(default=None,ge=1);channel_map:list[dict]=Field(default_factory=list);electrode_metadata:dict=Field(default_factory=dict);controller_id:Optional[str]=Field(default=None,max_length=100);notes:str=Field(default="",max_length=2000)
+ dataset_id:Optional[str]=Field(default=None,max_length=80);study_id:Optional[str]=None;subject_id:str=ID;session_id:str=ID;protocol_id:str=ID;protocol_version:Optional[int]=Field(default=None,ge=1);affected_side:Literal["LEFT","RIGHT","UNKNOWN","N/A"]="UNKNOWN";consent_recorded:bool=False;hardware_profile_id:Optional[str]=None;hardware_profile_version:Optional[int]=Field(default=None,ge=1);channel_map:list[dict]=Field(default_factory=list);electrode_metadata:dict=Field(default_factory=dict);controller_id:Optional[str]=Field(default=None,max_length=100);notes:str=Field(default="",max_length=2000)
  @model_validator(mode="after")
  def consent(self):
   if not self.consent_recorded:raise ValueError("Documented research recording consent is required")
@@ -213,7 +213,7 @@ class AcquisitionStore:
     modality=body.modality or ("CV" if collection["modality"] in {"CV","PAIRED"} else "EMG")
     if collection["modality"]!="PAIRED" and modality!=collection["modality"]:raise ValueError("Modality does not match protocol")
     trial.update(preflight_snapshot=pre,active_modality=modality,state="COUNTDOWN",countdown_remaining=trial.get("countdown_seconds",3),countdown_started_at=now,started_at=None,recording_start_timestamp_ns=None)
-    common=dict(rehab_type=collection["rehab_type"],subject_id=collection["subject_id"],duration_seconds=trial["duration_seconds"],session_id=collection["session_id"],study_id=collection.get("study_id"),collection_id=cid,protocol_id=collection["protocol_id"],protocol_version=collection["protocol_version"],protocol_snapshot=collection["protocol_snapshot"],trial_id=tid,trial_number=trial["trial_number"],attempt_number=trial["attempt_number"],sync_status="NOT_CONFIGURED",preflight_snapshot=pre,consent_recorded=True)
+    common=dict(dataset_id=collection.get("dataset_id"),rehab_type=collection["rehab_type"],subject_id=collection["subject_id"],duration_seconds=trial["duration_seconds"],session_id=collection["session_id"],study_id=collection.get("study_id"),collection_id=cid,protocol_id=collection["protocol_id"],protocol_version=collection["protocol_version"],protocol_snapshot=collection["protocol_snapshot"],trial_id=tid,trial_number=trial["trial_number"],attempt_number=trial["attempt_number"],sync_status="NOT_CONFIGURED",preflight_snapshot=pre,consent_recorded=True)
     if modality=="CV":
      result=recorder.start(RecordingConfiguration(**common,category=collection["rehab_type"],label=trial["research_label"],countdown_seconds=trial.get("countdown_seconds",3),manual_stop=trial.get("duration_mode")=="MANUAL_STOP",affected_side=collection["affected_side"] if collection["affected_side"] in {"LEFT","RIGHT"} else None));trial["recording_ids"]["CV"]=result.recording_id
     else:
@@ -231,7 +231,11 @@ class AcquisitionStore:
     modality=trial["active_modality"];rid=body.recording_id or trial["recording_ids"].get(modality)
     if not rid:raise ValueError("Recording ID is unavailable")
     final_state="APPROVED_WITH_WARNINGS" if action=="approve_warning" else "APPROVED"
-    recorder.save(rid) if modality=="CV" else emg_service.save(rid,final_state,None,body.notes);trial["state"]=final_state;trial["ended_at"]=now;trial["review_notes"]=body.notes;trial["attempts"].append({"attempt_number":trial["attempt_number"],"recording_id":rid,"modality":modality,"outcome":trial["state"],"timestamp":now});self._audit(data,"TRIAL_APPROVED_WITH_WARNING" if action=="approve_warning" else "TRIAL_APPROVED",cid,tid,{"recording_id":rid})
+    if modality=="CV":recorder.save(rid)
+    else:
+     saved=emg_service.get(rid) or emg_service.save(rid,final_state,None,body.notes)
+     persist_saved_recording(rid,saved)
+    trial["state"]=final_state;trial["ended_at"]=now;trial["review_notes"]=body.notes;trial["attempts"].append({"attempt_number":trial["attempt_number"],"recording_id":rid,"modality":modality,"outcome":trial["state"],"timestamp":now});self._audit(data,"TRIAL_APPROVED_WITH_WARNING" if action=="approve_warning" else "TRIAL_APPROVED",cid,tid,{"recording_id":rid})
    elif action=="retry":
     if trial["state"] not in {"REVIEW","RETRY_REQUIRED","DISCARDED"}:raise ValueError("Trial is not retryable")
     modality=trial.get("active_modality");rid=trial["recording_ids"].get(modality) if modality else None

@@ -176,7 +176,7 @@ class BrowserCollectionRepository:
             "configured": self.config.configured,
             "enabled": self.config.configured,
             "missing": missing,
-            "bucket": self.config.bucket,
+            "bucket": self.config.cv_bucket,
             "durability": "SUPABASE_PRIVATE" if self.config.configured else "NOT_CONFIGURED",
         }
 
@@ -196,6 +196,20 @@ class BrowserCollectionRepository:
             return
         detail = response.text[:500].strip()
         raise SupabaseVaultError(f"Supabase {operation} failed ({response.status_code})" + (f": {detail}" if detail else ""))
+
+    def _read_artifact(self, client: httpx.Client, object_path: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        """Read current CV objects while preserving access to the legacy bucket."""
+        encoded = quote(object_path, safe="/")
+        response = client.get(
+            f"/storage/v1/object/authenticated/{quote(self.config.cv_bucket, safe='')}/{encoded}",
+            headers=headers,
+        )
+        if response.status_code == 404 and self.config.bucket != self.config.cv_bucket:
+            response = client.get(
+                f"/storage/v1/object/authenticated/{quote(self.config.bucket, safe='')}/{encoded}",
+                headers=headers,
+            )
+        return response
 
     @staticmethod
     def _now() -> str:
@@ -370,10 +384,10 @@ class BrowserCollectionRepository:
                     role = "RAW" if artifact in media else "OBSERVATION"
                     folder = "raw" if role == "RAW" else "observations"
                     object_path = f"{prefix}/{folder}/{safe_name}"
-                    response = client.post(f"/storage/v1/object/{quote(self.config.bucket, safe='')}/{quote(object_path, safe='/')}", headers={"Content-Type": artifact.content_type, "x-upsert": "false"}, content=artifact.content)
+                    response = client.post(f"/storage/v1/object/{quote(self.config.cv_bucket, safe='')}/{quote(object_path, safe='/')}", headers={"Content-Type": artifact.content_type, "x-upsert": "false"}, content=artifact.content)
                     self._raise(response, f"artifact upload ({safe_name})")
                     expected_hash = hashlib.sha256(artifact.content).hexdigest()
-                    verified = client.get(f"/storage/v1/object/authenticated/{quote(self.config.bucket, safe='')}/{quote(object_path, safe='/')}")
+                    verified = self._read_artifact(client, object_path)
                     self._raise(verified, f"artifact verification ({safe_name})")
                     if len(verified.content) != len(artifact.content) or hashlib.sha256(verified.content).hexdigest() != expected_hash:
                         raise SupabaseVaultError(f"Supabase artifact verification failed ({safe_name})")
@@ -408,7 +422,7 @@ class BrowserCollectionRepository:
                 manifest = row.get("artifact_manifest") or []
                 valid = bool(manifest)
                 for artifact in manifest:
-                    data = client.get(f"/storage/v1/object/authenticated/{quote(self.config.bucket, safe='')}/{quote(artifact['object_path'], safe='/')}")
+                    data = self._read_artifact(client, artifact["object_path"])
                     if not data.is_success or len(data.content) != artifact.get("size_bytes") or hashlib.sha256(data.content).hexdigest() != artifact.get("sha256"):
                         valid = False
                         break
@@ -435,7 +449,7 @@ class BrowserCollectionRepository:
             if not artifact:
                 raise FileNotFoundError(filename)
             headers = {"Range": range_header} if range_header else {}
-            data = client.get(f"/storage/v1/object/authenticated/{quote(self.config.bucket, safe='')}/{quote(artifact['object_path'], safe='/')}", headers=headers)
+            data = self._read_artifact(client, artifact["object_path"], headers)
             self._raise(data, "artifact read")
         forwarded = {name: value for name in ("content-type", "content-range", "accept-ranges", "content-length") if (value := data.headers.get(name))}
         return data.content, data.status_code, forwarded

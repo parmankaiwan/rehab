@@ -30,13 +30,13 @@ function Distribution({
 function message(value: string) {
   return value.replaceAll("_", " ").toLowerCase();
 }
-export function DatasetVault() {
+export function DatasetVault({ modalityFilter, title }: { modalityFilter?: "CV" | "EMG"; title?: string } = {}) {
   const router = useRouter(),
     [rows, setRows] = useState<MlVaultRecording[]>([]),
     [stats, setStats] = useState<DatasetHealth | null>(null),
     [search, setSearch] = useState(""),
     [rehab, setRehab] = useState(""),
-    [modality, setModality] = useState(""),
+    [modality, setModality] = useState(modalityFilter || ""),
     [eligible, setEligible] = useState(true),
     [selecting, setSelecting] = useState(false),
     [selected, setSelected] = useState<Set<string>>(new Set()),
@@ -50,7 +50,8 @@ export function DatasetVault() {
   useEffect(() => {
     const q = new URLSearchParams();
     if (rehab) q.set("rehab_type", rehab);
-    if (modality) q.set("modality", modality);
+    const selectedModality = modalityFilter || modality;
+    if (selectedModality) q.set("modality", selectedModality);
     if (eligible) q.set("eligible", "true");
     Promise.all([
       fetch(`/api/master/data/ml/vault-recordings?${q}`),
@@ -61,7 +62,7 @@ export function DatasetVault() {
       if (b.ok) setStats(await b.json());
       if (c.ok) setSupabase(await c.json());
     });
-  }, [rehab, modality, eligible]);
+  }, [rehab, modality, modalityFilter, eligible]);
   const filtered = useMemo(
     () =>
       rows.filter(
@@ -95,7 +96,7 @@ export function DatasetVault() {
         name: `${rehabs.values().next().value || "DATASET"}_${modalities.values().next().value || "DATA"}_${new Date().toISOString().slice(0, 10)}`,
         source_query: {
           rehab_type: rehab,
-          modality,
+          modality: modalityFilter || modality,
           eligible: String(eligible),
         },
       }),
@@ -185,7 +186,7 @@ export function DatasetVault() {
       <div className="ml-page-head">
         <div>
           <span className="eyebrow">Canonical research data</span>
-          <h1>Dataset Vault</h1>
+          <h1>{title || "Dataset Vault"}</h1>
           <p className="master-lead">
             Review recordings or freeze an eligible selection for reproducible
             model training.
@@ -266,7 +267,7 @@ export function DatasetVault() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select
+        {!modalityFilter && <select
           aria-label="Rehab type"
           value={rehab}
           onChange={(e) => setRehab(e.target.value)}
@@ -275,7 +276,7 @@ export function DatasetVault() {
           {[...new Set(rows.map((x) => x.rehab_type))].map((x) => (
             <option key={x}>{x}</option>
           ))}
-        </select>
+        </select>}
         <select
           aria-label="Modality"
           value={modality}

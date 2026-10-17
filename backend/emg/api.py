@@ -25,8 +25,12 @@ from .commissioning import EmgHardwareValidationStore, ValidationReviewRequest, 
 from .device_scanner import scan_serial_devices
 from ..dataset_config import dataset_settings
 from ..master_dataset_api import require_master
+from ..data_backend import data_backend_mode
+from ..supabase_vault import SupabaseVaultError
+from .cloud_vault import EmgCloudVault, EmgDatasetCreate, EmgLabelCreate
 
 service = EmgService(dataset_settings())
+cloud_vault = EmgCloudVault()
 commissioning = EmgHardwareValidationStore(dataset_settings().root.parent, service)
 router = APIRouter(
     prefix="/api/master/emg",
@@ -34,6 +38,66 @@ router = APIRouter(
     dependencies=[Depends(require_master)],
 )
 ws_router = APIRouter()
+
+
+def persist_saved_recording(rid: str, saved: dict) -> dict:
+    """Finalize an already-approved local recording in the active authority."""
+    if data_backend_mode() != "supabase":
+        return {**saved, "persistence_status": "LOCAL_ONLY"}
+    item = service.get(rid)
+    if not item:
+        raise RuntimeError("Saved EMG recording could not be reopened")
+    recording_path = (dataset_settings().root / item["relative_path"]).resolve()
+    cloud = cloud_vault.save_recording(item, recording_path)
+    return {**saved, "persistence_status": cloud["persistence_status"], "cloud_dataset_id": cloud["dataset_id"]}
+
+
+@router.get("/datasets")
+def cloud_datasets(include_archived: bool = False):
+    if data_backend_mode() != "supabase":
+        return []
+    try:
+        return cloud_vault.list_datasets(include_archived)
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud vault is unavailable") from exc
+
+
+@router.get("/datasets/status")
+def cloud_dataset_status():
+    mode = data_backend_mode()
+    return {"mode": mode.upper(), "authoritative": mode == "supabase", **cloud_vault.status()}
+
+
+@router.post("/datasets")
+def cloud_dataset_create(request: EmgDatasetCreate):
+    if data_backend_mode() != "supabase":
+        raise HTTPException(409, "Supabase must be authoritative before creating hosted EMG datasets")
+    try:
+        return cloud_vault.create_dataset(request)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud vault is unavailable") from exc
+
+
+@router.post("/datasets/{dataset_id}/labels")
+def cloud_dataset_label(dataset_id: str, request: EmgLabelCreate):
+    if data_backend_mode() != "supabase":
+        raise HTTPException(409, "Supabase must be authoritative before editing hosted EMG datasets")
+    try:
+        return cloud_vault.create_label(dataset_id, request)
+    except (ValueError, SupabaseVaultError) as exc:
+        raise HTTPException(422 if isinstance(exc, ValueError) else 503, str(exc)) from exc
+
+
+@router.get("/cloud-recordings")
+def cloud_recordings(dataset_id: str = ""):
+    if data_backend_mode() != "supabase":
+        return []
+    try:
+        return cloud_vault.list_recordings(dataset_id)
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG cloud vault is unavailable") from exc
 
 
 @router.get("/commissioning/runs")
@@ -263,9 +327,23 @@ def recording_marker(req: RecordingMarkerRequest):
 @router.post("/recordings/{rid}/save")
 def save(rid: str):
     try:
-        return service.save(rid)
+        local = service.get(rid) or service.save(rid)
+        return persist_saved_recording(rid, local)
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG recording is preserved locally but durable cloud storage failed") from exc
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/recordings/{rid}/sync")
+def retry_cloud_sync(rid: str):
+    item = service.get(rid)
+    if not item:
+        raise HTTPException(404, "EMG recording not found")
+    try:
+        return persist_saved_recording(rid, item)
+    except SupabaseVaultError as exc:
+        raise HTTPException(503, "EMG recording remains local; durable cloud storage retry failed") from exc
 
 
 @router.delete("/recordings/{rid}/review")

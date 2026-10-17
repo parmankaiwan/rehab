@@ -14,7 +14,7 @@ from backend.supabase_vault import SupabaseVaultConfig, SupabaseVaultError
 
 
 def config(url: str = "https://example.supabase.co", key: str = "secret") -> SupabaseVaultConfig:
-    return SupabaseVaultConfig(url=url, secret_key=key, bucket="flexmap-dataset", timeout_seconds=5)
+    return SupabaseVaultConfig(url=url, secret_key=key, cv_bucket="flexmap-cv-vault", timeout_seconds=5)
 
 
 def test_missing_storage_configuration_is_explicit_and_blocks_writes():
@@ -125,3 +125,26 @@ def test_still_media_type_must_match_extension():
     data["media_extension"] = ".mp4"
     with pytest.raises(ValueError, match="do not match"):
         BrowserSampleMetadata(**data)
+
+
+def test_legacy_cv_artifacts_remain_readable_after_bucket_separation():
+    paths = []
+
+    def handler(request: httpx.Request):
+        paths.append(request.url.path)
+        if "/flexmap-cv-vault/" in request.url.path:
+            return httpx.Response(404)
+        if "/flexmap-dataset/" in request.url.path:
+            return httpx.Response(206, content=b"legacy", headers={"content-range": "bytes 0-5/6"})
+        raise AssertionError(request.url.path)
+
+    repository = BrowserCollectionRepository(config(), transport=httpx.MockTransport(handler))
+    with repository._client() as client:
+        response = repository._read_artifact(client, "legacy/sample/image.jpg", {"Range": "bytes=0-5"})
+
+    assert response.status_code == 206
+    assert response.content == b"legacy"
+    assert paths == [
+        "/storage/v1/object/authenticated/flexmap-cv-vault/legacy/sample/image.jpg",
+        "/storage/v1/object/authenticated/flexmap-dataset/legacy/sample/image.jpg",
+    ]
