@@ -1,5 +1,8 @@
 __pycache__/
 .pytest_cache/
+.pytest-tmp/
+.test-tmp/
+.test-tmp-final/
 *.pyc
 web/node_modules/
 web/.next/

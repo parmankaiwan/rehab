@@ -3,7 +3,8 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
-        "dev": "next dev",
+        "dev": "next dev -p 3000",
+        "prebuild": "node scripts/assert-next-not-running.mjs",
         "build": "next build",
         "build:cloudflare": "opennextjs-cloudflare build",
         "preview:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
