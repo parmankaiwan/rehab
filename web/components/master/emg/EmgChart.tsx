@@ -91,7 +91,7 @@ export function EmgChart({ samples, channels, paused, initialSignal = "raw", set
   return <div className={`emg-scope emg-scope--${graph.theme}`}>
     <canvas ref={canvasRef} className="emg-canvas" aria-label="Live EMG waveform" />
     {graph.showStats && <div className="emg-channel-stat-grid" title={graph.statsSource === "visible" ? `Statistics calculated from visible ${graph.timeWindowSec}-second window.` : "Statistics calculated since graph clear."}>{stats.map((item, index) => item && <div key={item.channelId}><strong>{shownChannels[index].display_name}</strong><span><small>Current</small>{format(item.current)}</span><span><small>Min</small>{format(item.minimum)}</span><span><small>Max</small>{format(item.maximum)}</span><span><small>P-P</small>{format(item.peakToPeak)}</span>{graph.showUnits && <em>{item.unit}</em>}</div>)}</div>}
-    {graph.showStats && stats.some(Boolean) && <details className="emg-graph-details"><summary>Graph details</summary>{stats.map((item, index) => item && <p key={item.channelId}><strong>{shownChannels[index].display_name}</strong> � Mean {format(item.mean)} � {item.sampleCount.toLocaleString()} displayed samples � {item.unit}</p>)}</details>}
+    {graph.showStats && stats.some(Boolean) && <details className="emg-graph-details"><summary>Graph details</summary>{stats.map((item, index) => item && <p key={item.channelId}><strong>{shownChannels[index].display_name}</strong> · Mean {format(item.mean)} · {item.sampleCount.toLocaleString()} displayed samples · {item.unit}</p>)}</details>}
   </div>;
 }
 

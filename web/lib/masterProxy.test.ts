@@ -45,6 +45,15 @@ describe("normalizeMasterResponse", () => {
     expect(await result.json()).toEqual({ detail: "denied" });
   });
 
+  it("preserves JSON download disposition while replacing representation headers", async () => {
+    const upstream = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "content-disposition": "attachment; filename=report.json", "content-encoding": "gzip", "content-length": "7" } });
+    const result = await normalizeMasterResponse(upstream, { method: "GET", path: "ml/emg-comparison/experiments/one/export.json", requestId: "req-export" });
+    expect(result.headers.get("content-disposition")).toBe("attachment; filename=report.json");
+    expect(result.headers.get("content-encoding")).toBeNull();
+    expect(result.headers.get("content-length")).not.toBe("7");
+    expect(await result.json()).toEqual({ ok: true });
+  });
+
   it.each([
     ["truncated JSON", new Response('[{"id":"x"}', { headers: { "content-type": "application/json" } }), "UPSTREAM_INVALID_JSON"],
     ["HTML", new Response("<html>bad gateway</html>", { status: 502, headers: { "content-type": "text/html" } }), "UPSTREAM_UNEXPECTED_TYPE"],

@@ -14,7 +14,14 @@ interface TrainingMetrics {
   accuracy: number;
   evaluation_samples: number;
   confusion_matrix: { labels: string[]; values: number[][] };
+  evaluation_scope: string;
+  training_samples: number;
+  validation?: TrainingMetricSet | null;
+  test?: TrainingMetricSet | null;
+  development_training?: TrainingMetricSet | null;
 }
+
+type TrainingMetricSet = Pick<TrainingMetrics, "f1_macro" | "balanced_accuracy" | "accuracy" | "evaluation_samples" | "confusion_matrix">;
 
 export function TrainingRunDetail({ id }: { id: string }) {
   const [run, setRun] = useState<TrainingRun | null>(null);
@@ -66,11 +73,16 @@ export function TrainingRunDetail({ id }: { id: string }) {
       {run.error && <p className="master-alert"><ShieldAlert />{run.error}</p>}
     </article>
     {run.status === "COMPLETED" && metrics && <>
+      {metrics.evaluation_scope === "DEVELOPMENT_ONLY" && <p className="master-alert"><ShieldAlert />Development-only results were calculated on training data. They are not held-out test performance.</p>}
       <div className="ml-metrics">
         <div><strong>{pct(metrics.f1_macro)}</strong><span>Macro F1</span></div>
         <div><strong>{pct(metrics.balanced_accuracy)}</strong><span>Balanced accuracy</span></div>
         <div><strong>{pct(metrics.accuracy)}</strong><span>Accuracy</span></div>
         <div><strong>{metrics.evaluation_samples}</strong><span>Evaluation samples</span></div>
+      </div>
+      <div className="ml-results-grid">
+        <MetricPanel title="Validation set" metrics={metrics.validation} />
+        <MetricPanel title="Held-out test set" metrics={metrics.test} />
       </div>
       <div className="ml-results-grid">
         <article className="master-card"><h2>Confusion matrix</h2>{matrix && <table className="ml-matrix"><thead><tr><th>True ↓ / Predicted →</th>{matrix.labels.map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>{matrix.values.map((row, index) => <tr key={matrix.labels[index]}><th>{matrix.labels[index]}</th>{row.map((value, column) => <td key={column}>{value}</td>)}</tr>)}</tbody></table>}</article>
@@ -80,4 +92,8 @@ export function TrainingRunDetail({ id }: { id: string }) {
       <div className="ml-run-actions"><a href={`${api}/runs/${id}/artifacts/metrics.json`}><Download />Metrics</a><a href={`${api}/runs/${id}/artifacts/predictions.csv`}><Download />Predictions</a><Link href={`/master/ml/train?dataset=${run.dataset_version_id}`}><FlaskConical />Train another model</Link><button className="primary" onClick={register}><CheckCircle />Register as Experimental</button></div>
     </>}
   </section>;
+}
+
+function MetricPanel({ title, metrics }: { title: string; metrics?: TrainingMetricSet | null }) {
+  return <article className="master-card"><h2>{title}</h2>{metrics ? <dl><div><dt>Samples</dt><dd>{metrics.evaluation_samples}</dd></div><div><dt>Macro F1</dt><dd>{pct(metrics.f1_macro)}</dd></div><div><dt>Balanced accuracy</dt><dd>{pct(metrics.balanced_accuracy)}</dd></div><div><dt>Accuracy</dt><dd>{pct(metrics.accuracy)}</dd></div></dl> : <p>Not available for this split.</p>}</article>;
 }

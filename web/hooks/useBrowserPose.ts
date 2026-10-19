@@ -138,6 +138,8 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
   const [error, setError] = useState("");
   const [delegate, setDelegate] = useState<BrowserPoseDelegate | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [cameraLeaseReady, setCameraLeaseReady] = useState(false);
+  const cameraLeaseIdRef = useRef("");
   const restart = useCallback(() => setGeneration((value) => value + 1), []);
   const getStream = useCallback(() => streamRef.current, []);
   const getLatestObservation = useCallback(() => latestRef.current, []);
@@ -187,7 +189,36 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
   }, [buildObservation]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) { setCameraLeaseReady(false); return; }
+    let active = true;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const leaseId = cameraLeaseIdRef.current || crypto.randomUUID();
+    cameraLeaseIdRef.current = leaseId;
+    const send = async (action: "acquire" | "renew" | "release") => {
+      const response = await fetch("/api/local-camera-lease", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lease_id: leaseId, action }), keepalive: action === "release",
+      });
+      if (response.status === 409) return { accepted: true, mode: "HOSTED" };
+      return response.json();
+    };
+    void send("acquire").then((result) => {
+      if (!active) return;
+      if (!result.accepted) { setState("UNAVAILABLE"); setError(result.message || "Camera is already in use by another FlexMap page."); return; }
+      // Give the Python owner a bounded moment to release VideoCapture.
+      window.setTimeout(() => active && setCameraLeaseReady(true), result.mode === "HOSTED" ? 0 : 400);
+      heartbeat = setInterval(() => void send("renew").catch(() => undefined), 2000);
+    }).catch(() => { if (active) setCameraLeaseReady(true); });
+    return () => {
+      active = false;
+      setCameraLeaseReady(false);
+      if (heartbeat) clearInterval(heartbeat);
+      void send("release").catch(() => undefined);
+    };
+  }, [enabled, generation]);
+
+  useEffect(() => {
+    if (!enabled || !cameraLeaseReady) return;
     let stopped = false;
     let animation = 0;
     let videoFrameCallback = 0;
@@ -284,7 +315,7 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
       latestRef.current = null;
       if (video) video.srcObject = null;
     };
-  }, [enabled, generation, deviceId, buildObservation]);
+  }, [enabled, cameraLeaseReady, generation, deviceId, buildObservation]);
 
   return { videoRef, snapshot, state, error, delegate, restart, getStream, getLatestObservation, subscribe, captureStill };
 }

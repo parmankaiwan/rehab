@@ -28,6 +28,8 @@ from .sessions import router as sessions_router
 from .patient_sessions import router as patient_sessions_router
 from .acquisition import router as acquisition_router
 from .ml import router as ml_router
+from .emg_comparison import router as emg_comparison_router
+from .lifecycle_api import prepare_for_shutdown, router as lifecycle_router, shutdown_requested
 
 app = FastAPI(title="FlexMap Posture Bridge", version="1.0.0")
 origins = [value.strip() for value in os.getenv("FLEXMAP_CORS_ORIGINS", "http://localhost:3000").split(",") if value.strip()]
@@ -39,6 +41,18 @@ app.include_router(sessions_router)
 app.include_router(patient_sessions_router)
 app.include_router(acquisition_router)
 app.include_router(ml_router)
+app.include_router(emg_comparison_router)
+app.include_router(lifecycle_router)
+
+
+@app.middleware("http")
+async def block_new_recordings_during_shutdown(request: Request, call_next):
+    if shutdown_requested.is_set() and request.method == "POST" and request.url.path in {
+        "/api/master/recordings/start",
+        "/api/master/emg/recordings/start",
+    }:
+        raise HTTPException(status_code=409, detail="FlexMap is stopping; new recordings are disabled")
+    return await call_next(request)
 
 
 def require_engine(request: Request) -> None:
@@ -51,7 +65,7 @@ def require_engine(request: Request) -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "application": "flexmap-api"}
 
 
 @app.get("/api/status", response_model=EngineStatus)
@@ -132,6 +146,7 @@ def video_metrics() -> dict:
 
 @app.on_event("shutdown")
 async def shutdown_webrtc() -> None:
+    prepare_for_shutdown()
     await close_peers()
     emg_service.disconnect()
 

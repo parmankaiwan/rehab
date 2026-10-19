@@ -146,7 +146,7 @@ export function EmgLivePage() {
       )}
       <article className='master-card emg-live-chart'>
         <div className='master-card-head'>
-          <div><strong>Live waveform</strong><small>{status?.serial_port || 'No port'} � {status?.received_rate_hz ? status.received_rate_hz.toFixed(1) + ' Hz' : 'Waiting'} � {channels.length} channel{channels.length === 1 ? '' : 's'}</small></div>
+          <div><strong>Live waveform</strong><small>{status?.serial_port || 'No port'} · {status?.received_rate_hz ? status.received_rate_hz.toFixed(1) + ' Hz' : 'Waiting'} · {channels.length} channel{channels.length === 1 ? '' : 's'}</small></div>
           <div className='emg-live-badges'><span>{status?.is_mock ? 'MOCK DATA' : 'REAL DEVICE'}</span><LiveStatusBadge state={state} /></div>
         </div>
         <div className='emg-toolbar'>
@@ -158,7 +158,7 @@ export function EmgLivePage() {
           <EmgChart samples={stream.samples} channels={channels} paused={paused} settings={settings} hardwareRange={status?.adc_bits ? [0, 2 ** status.adc_bits - 1] : undefined} />
           {!connected && <div className='emg-chart-overlay'><strong>EMG device disconnected</strong><span>{status?.latest_data_age_ms != null ? `Last data ${Math.round(status.latest_data_age_ms / 1000)} s ago` : 'Waiting for a device'}</span><button onClick={connect}>Reconnect</button></div>}
           {state === 'STALE' && <div className='emg-chart-overlay'><strong>Signal stale</strong><span>No recent valid samples</span></div>}
-          {paused && <span className='emg-paused-flag'>View paused � acquisition continues</span>}
+          {paused && <span className='emg-paused-flag'>View paused · acquisition continues</span>}
         </div>
         <div className='live-controls' aria-label='Waveform controls'>
           <button onClick={() => setPaused((value) => !value)}>

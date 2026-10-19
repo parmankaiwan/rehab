@@ -11,7 +11,7 @@
         "deploy:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
         "cf-typegen": "wrangler types node_modules/cloudflare-env.d.ts --env-interface CloudflareEnv",
         "lint": "eslint .",
-        "test": "vitest run",
+        "test": "vitest run --configLoader runner",
         "typecheck": "tsc --noEmit",
         "start": "next start"
     },

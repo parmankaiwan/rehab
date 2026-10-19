@@ -16,12 +16,14 @@ function errorBody(code: ProxyErrorCode, requestId: string) {
   return { error: { code, message: messages[code], request_id: requestId } };
 }
 
-function jsonResponse(body: unknown, status: number, requestId: string) {
+function jsonResponse(body: unknown, status: number, requestId: string, upstream?: Response) {
   const headers = new Headers({
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
     "x-request-id": requestId,
   });
+  const disposition = upstream?.headers.get("content-disposition");
+  if (disposition) headers.set("content-disposition", disposition);
   return new Response(JSON.stringify(body), { status, headers });
 }
 
@@ -103,7 +105,7 @@ export async function normalizeMasterResponse(
     if (!validateExpectedShape(path, value)) {
       return jsonResponse(errorBody("UPSTREAM_INVALID_JSON", requestId), upstream.ok ? 502 : upstream.status, requestId);
     }
-    return jsonResponse(value, upstream.status, requestId);
+    return jsonResponse(value, upstream.status, requestId, upstream);
   } catch {
     return jsonResponse(errorBody("UPSTREAM_INVALID_JSON", requestId), upstream.ok ? 502 : upstream.status, requestId);
   }

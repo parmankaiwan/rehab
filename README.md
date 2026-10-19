@@ -2,6 +2,8 @@
 
 FlexMap presents the existing Python posture classifier as a calm, patient-friendly web interface.
 
+The Master console includes an EMG mathematical comparison workspace at `/master/ml/emg-comparison`. See [docs/EMG_MATHEMATICAL_COMPARISON.md](docs/EMG_MATHEMATICAL_COMPARISON.md) for equations, hardware eligibility, model limitations, persistence, and exports.
+
 ```text
 CameraManager -> PoseTracker -> PostureAnalyzer/PostureClassifier
                                       |
@@ -45,6 +47,39 @@ npm run dev
 ```
 
 Open <http://localhost:3000>.
+
+## Integrated Windows application lifecycle
+
+For normal local use, double-click `START FLEXMAP.cmd` instead of opening three
+terminals. The launcher starts FastAPI, waits for `/health`, starts Next.js and
+waits for its identity endpoint, then starts the existing hardware agent. The
+agent remains the sole owner of the Python camera process and EMG serial reader.
+It performs live monitoring only; it never starts or saves a research recording.
+
+Run `install-flexmap-autostart.ps1` once to create a **START FLEXMAP** desktop
+shortcut. The installer removes the obsolete independent hardware-agent logon
+task because it could compete for the camera or serial port. It does not create
+a new automatic-logon task.
+
+Open **Master → System Diagnostics** to see verified application, camera, EMG,
+and Supabase states. That page offers bounded CV/EMG reconnect actions and an
+explicit **Exit FlexMap** button. Exit first cancels active acquisition, records
+an `INTERRUPTED` local lifecycle event without marking the trial saved, releases
+the serial port and camera, then stops only the child PIDs created by that
+launcher. Closing or refreshing a browser tab does not stop shared services.
+
+The supervisor binds its control interface to `127.0.0.1`, uses a per-session
+random token, and exposes it only through Master-authenticated FastAPI routes.
+Those routes are disabled unless FastAPI was launched with
+`FLEXMAP_LOCAL_LIFECYCLE_ENABLED=true`; Render cannot invoke local shutdown.
+If ports 3000 or 8000 belong to an unrelated program, startup stops with an
+error and does not terminate that program. Runtime state and logs are under
+ignored `data/runtime/`.
+
+Browser MediaPipe remains an explicitly selected, page-scoped camera source.
+The automatic application-wide source is the existing Python CV engine. Do not
+enable both sources for the same physical camera at the same time; use the
+source selector to hand ownership over after the previous source releases it.
 
 To work without a camera, set `NEXT_PUBLIC_USE_MOCK_POSTURE=true` in `web/.env.local`, restart Next.js, and use the clearly labelled GREEN/ORANGE/RED/GREY controls. Mock mode never identifies its data as live.
 

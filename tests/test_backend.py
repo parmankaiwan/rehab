@@ -16,7 +16,7 @@ def sample() -> PostureSnapshot:
 
 
 def test_health_status_and_reset():
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {"status": "ok", "application": "flexmap-api"}
     store.update(sample())
     assert client.get("/api/status").json()["cv_engine"] == "running"
     assert client.post("/api/reset").json() == {"success": True}

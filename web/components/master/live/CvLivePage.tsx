@@ -15,7 +15,7 @@ const title = (value: string) => value.replaceAll("_", " ").toLowerCase().replac
 const measurementKeys = ["LEFT_ELBOW_ANGLE", "RIGHT_ELBOW_ANGLE", "LEFT_WRIST_SPEED", "RIGHT_WRIST_SPEED", "TRUNK_ANGLE", "TRUNK_CENTER_OFFSET", "SHOULDER_DIFFERENCE"];
 
 export function CvLivePage() {
-  const [source, setSource] = useState<CvSource>("BROWSER");
+  const [source, setSource] = useState<CvSource>("ENGINE");
   const browser = useBrowserPose(source === "BROWSER");
   const engine = usePostureStream(source === "ENGINE");
   const snapshot = source === "BROWSER" ? browser.snapshot : engine.snapshot;

@@ -43,6 +43,18 @@ def test_subject_grouped_split_has_zero_leakage(ml_store):
  for row in split["assignments"]:groups.setdefault(row["subject_id"],set()).add(row["split"])
  assert all(len(value)==1 for value in groups.values())
 
+def test_supabase_cv_and_emg_records_are_normalized(monkeypatch):
+ monkeypatch.setattr(ml.browser_collections,"get_sample",lambda *_args,**_kwargs:{"sample_id":"SMP-cloud","dataset_id":"DS-1","label_at_capture":"reach","reviewed_label":"return","subject_id":"P001","review_status":"APPROVED","training_eligible":True,"technical_quality":"GOOD","persistence_status":"STORED","artifact_manifest":[],"metadata":{"rehabilitation_module_id":"REACHING"}})
+ cv=ml._cloud_cv("SMP-cloud");assert cv["recording_id"]=="SMP-cloud";assert cv["research_label"]=="return";assert cv["source_backend"]=="SUPABASE_CV"
+ monkeypatch.setattr(ml.cloud_emg_vault,"get_recording",lambda *_args,**_kwargs:{"recording_id":"EMG-cloud","dataset_id":"EDS-1","subject_code":"P002","research_label":"contract","review_status":"APPROVED","training_eligible":True,"technical_quality":"GOOD","persistence_status":"STORED","artifacts":[]})
+ emg=ml._cloud_emg("EMG-cloud");assert emg["subject_id"]=="P002";assert emg["source_backend"]=="SUPABASE_EMG"
+
+def test_related_trials_remain_in_one_partition(ml_store):
+ values=list(ml_store.values());values[0]["collection_id"]="SHARED";values[2]["collection_id"]="SHARED"
+ dataset=frozen_dataset(ml_store);split=ml.create_split(ml.SplitRequest(dataset_version_id=dataset["dataset_version_id"],seed=42))
+ shared={x["split"] for x in split["assignments"] if x["related_trial_group"]=="SHARED"}
+ assert len(shared)==1;assert split["leakage"]["related_trial_overlap"]=={}
+
 def test_vault_delete_requires_confirmation_and_calls_modality_store(ml_store,monkeypatch):
  rid=next(iter(ml_store));deleted=[];monkeypatch.setattr(ml,"vault",SimpleNamespace(delete=lambda value:deleted.append(value)))
  with pytest.raises(HTTPException) as mismatch:ml.delete_vault_recording(rid,"WRONG")
@@ -64,5 +76,19 @@ def test_background_training_evaluation_and_registry(ml_store,model_type):
   if run["status"] not in ("QUEUED","RUNNING"):break
   time.sleep(.05)
  assert run["status"]=="COMPLETED",run.get("error");assert {"accuracy","balanced_accuracy","precision_macro","recall_macro","f1_macro","confusion_matrix"}<=run["metrics"].keys();assert run["predictions"]
+ assert run["metrics"]["evaluation_scope"]=="RESEARCH";assert run["metrics"]["validation"] is not None;assert run["metrics"]["test"] is not None
+ assert {x["recording_id"] for x in run["predictions"] if x["split"]=="VALIDATION"}.isdisjoint({x["recording_id"] for x in run["predictions"] if x["split"]=="TEST"})
  base=Path(run["artifact_dir"]);assert (base/"model.joblib").is_file();assert (base/"predictions.csv").is_file()
  model=ml.register_model(ml.RegisterRequest(training_run_id=run["training_run_id"]));assert model["status"]=="EXPERIMENTAL";assert model["training_run_id"]==run["training_run_id"]
+
+def test_insufficient_subject_run_is_explicitly_development_only(ml_store):
+ selected={key:value for key,value in ml_store.items() if value["subject_id"]=="P001"}
+ dataset=frozen_dataset(selected);split=ml.create_split(ml.SplitRequest(dataset_version_id=dataset["dataset_version_id"],development_only=True))
+ run=ml.create_run(ml.RunRequest(dataset_version_id=dataset["dataset_version_id"],split_id=split["split_id"],feature_pipeline_id="FP-CV-KINEMATICS-V1",model_type="LOGISTIC_REGRESSION",warnings_acknowledged=True))
+ for _ in range(100):
+  run=ml.get_run(run["training_run_id"])
+  if run["status"] not in ("QUEUED","RUNNING"):break
+  time.sleep(.05)
+ assert run["status"]=="COMPLETED";assert run["evaluation_scope"]=="DEVELOPMENT_ONLY"
+ assert run["metrics"]["validation"] is None and run["metrics"]["test"] is None
+ assert run["metrics"]["development_training"]["evaluation_samples"]==2
