@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import os
+import re
 from pathlib import Path
 
 try:
@@ -32,6 +33,13 @@ from .emg_comparison import router as emg_comparison_router
 from .lifecycle_api import prepare_for_shutdown, router as lifecycle_router, shutdown_requested
 
 app = FastAPI(title="FlexMap Posture Bridge", version="1.0.0")
+
+
+@app.get("/version")
+def deployed_version():
+    commit = os.getenv("RENDER_GIT_COMMIT", "")
+    return {"application": "flexmap-api", "release": "2026-10-27-camera-emg", "commit": commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None}
+
 origins = [value.strip() for value in os.getenv("FLEXMAP_CORS_ORIGINS", "http://localhost:3000").split(",") if value.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["GET", "POST"], allow_headers=["*"])
 app.include_router(master_dataset_router)

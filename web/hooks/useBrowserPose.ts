@@ -7,6 +7,20 @@ import type { DisplayLandmark, PostureComponent, PostureSnapshot, PostureState }
 export type BrowserPoseState = "STARTING" | "CAMERA_READY" | "LIVE" | "DENIED" | "UNAVAILABLE";
 export type BrowserPoseDelegate = "GPU" | "CPU";
 
+export function browserCameraErrorMessage(cause: unknown): string {
+  if (cause instanceof DOMException) {
+    if (["NotAllowedError", "SecurityError"].includes(cause.name)) {
+      return "Camera permission was not granted. Allow Camera in this site's browser controls, then check Windows Settings > Privacy & security > Camera > Let desktop apps access your camera. Click Reconnect after allowing access.";
+    }
+    if (["NotReadableError", "AbortError"].includes(cause.name)) {
+      return "The camera could not be opened. Close other camera apps, FlexMap camera tabs, and the Python CV viewer, then click Reconnect.";
+    }
+    if (cause.name === "NotFoundError") return "No camera was found. Connect or enable a camera, check its privacy shutter, then click Reconnect.";
+    if (cause.name === "OverconstrainedError") return "The selected camera is unavailable or does not support the requested settings. Reconnect the camera or select another device.";
+  }
+  return cause instanceof Error ? cause.message : "Browser camera could not start.";
+}
+
 export interface RawPoseLandmark {
   index: number;
   name: string;
@@ -117,6 +131,7 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
   state: BrowserPoseState;
   error: string;
   delegate: BrowserPoseDelegate | null;
+  inferenceCount: number;
   restart: () => void;
   getStream: () => MediaStream | null;
   getLatestObservation: () => BrowserPoseObservation | null;
@@ -137,6 +152,7 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
   const [state, setState] = useState<BrowserPoseState>("STARTING");
   const [error, setError] = useState("");
   const [delegate, setDelegate] = useState<BrowserPoseDelegate | null>(null);
+  const [inferenceCount, setInferenceCount] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [cameraLeaseReady, setCameraLeaseReady] = useState(false);
   const cameraLeaseIdRef = useRef("");
@@ -227,7 +243,22 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
     let lastFallbackMediaTime = -1;
     let lastReactUpdate = 0;
     const mountedVideo = videoRef.current;
-    setState("STARTING"); setError(""); setSnapshot(null); setDelegate(null);
+    let ownedStream: MediaStream | null = null;
+    let ownedLandmarker: PoseLandmarker | null = null;
+    const releaseResources = () => {
+      if (ownedLandmarker) {
+        ownedLandmarker.close();
+        if (landmarkerRef.current === ownedLandmarker) landmarkerRef.current = null;
+        ownedLandmarker = null;
+      }
+      if (ownedStream) {
+        ownedStream.getTracks().forEach((track) => track.stop());
+        if (streamRef.current === ownedStream) streamRef.current = null;
+        if (mountedVideo?.srcObject === ownedStream) mountedVideo.srcObject = null;
+        ownedStream = null;
+      }
+    };
+    setState("STARTING"); setError(""); setSnapshot(null); setDelegate(null); setInferenceCount(0);
 
     const publish = (observation: BrowserPoseObservation, now: number) => {
       latestRef.current = observation;
@@ -235,6 +266,7 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
       if (now - lastReactUpdate >= 100) {
         lastReactUpdate = now;
         setSnapshot(observation.snapshot);
+        setInferenceCount(observation.inferenceIterationId);
         setState(observation.valid ? "LIVE" : "CAMERA_READY");
       }
     };
@@ -259,6 +291,7 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser does not support camera access.");
         const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, facingMode: deviceId ? undefined : "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
         if (stopped) { stream.getTracks().forEach((track) => track.stop()); return; }
+        ownedStream = stream;
         streamRef.current = stream;
         const video = mountedVideo;
         if (!video) throw new Error("Camera display is not ready.");
@@ -267,13 +300,17 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
         setState("CAMERA_READY");
         const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
         const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
+        if (stopped) return;
         try {
-          landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
+          ownedLandmarker = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
           delegateRef.current = "GPU";
         } catch {
-          landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
+          if (stopped) return;
+          ownedLandmarker = await PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" }, runningMode: "VIDEO", numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
           delegateRef.current = "CPU";
         }
+        if (stopped) { releaseResources(); return; }
+        landmarkerRef.current = ownedLandmarker;
         setDelegate(delegateRef.current);
         const supportsFrameCallback = "requestVideoFrameCallback" in video;
         if (supportsFrameCallback) {
@@ -296,10 +333,11 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
           animation = requestAnimationFrame(onAnimation);
         }
       } catch (cause) {
+        releaseResources();
         if (stopped) return;
         const denied = cause instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(cause.name);
         setState(denied ? "DENIED" : "UNAVAILABLE");
-        setError(denied ? "Camera permission was not granted." : cause instanceof Error ? cause.message : "Browser camera could not start.");
+        setError(browserCameraErrorMessage(cause));
       }
     };
     void run();
@@ -308,14 +346,10 @@ export function useBrowserPose(enabled = true, deviceId?: string): {
       cancelAnimationFrame(animation);
       const video = mountedVideo;
       if (video && videoFrameCallback && "cancelVideoFrameCallback" in video) video.cancelVideoFrameCallback(videoFrameCallback);
-      landmarkerRef.current?.close();
-      landmarkerRef.current = null;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      releaseResources();
       latestRef.current = null;
-      if (video) video.srcObject = null;
     };
   }, [enabled, cameraLeaseReady, generation, deviceId, buildObservation]);
 
-  return { videoRef, snapshot, state, error, delegate, restart, getStream, getLatestObservation, subscribe, captureStill };
+  return { videoRef, snapshot, state, error, delegate, inferenceCount, restart, getStream, getLatestObservation, subscribe, captureStill };
 }

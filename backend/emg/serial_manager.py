@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections import Counter, deque
@@ -330,8 +331,7 @@ class SerialManager:
     @staticmethod
     def _number(value: str) -> bool:
         try:
-            float(value)
-            return True
+            return math.isfinite(float(value))
         except ValueError:
             return False
 

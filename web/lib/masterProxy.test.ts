@@ -76,4 +76,12 @@ describe("normalizeMasterResponse", () => {
     expect(result.headers.get("content-range")).toBe("bytes 2-3/10");
     expect([...new Uint8Array(await result.arrayBuffer())]).toEqual([2, 3]);
   });
+
+  it("preserves SVG research figure downloads", async () => {
+    const svg='<svg xmlns="http://www.w3.org/2000/svg"><title>Study A</title></svg>';
+    const result=await normalizeMasterResponse(new Response(svg,{headers:{"content-type":"image/svg+xml","content-disposition":"attachment; filename=study_a.svg"}}),{method:"GET",path:"ml/emg-comparison/experiments/EMGR-test/figures/study_a.svg",requestId:"figure-test"});
+    expect(result.status).toBe(200);
+    expect(result.headers.get("content-type")).toBe("image/svg+xml");
+    expect(await result.text()).toBe(svg);
+  });
 });

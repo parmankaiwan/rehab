@@ -17,3 +17,4 @@ scipy>=1.17,<2
 scikit-learn>=1.8,<2
 joblib>=1.4,<2
 torch>=2.13,<2.14
+matplotlib>=3.10,<4

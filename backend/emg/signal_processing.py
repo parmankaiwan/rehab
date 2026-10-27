@@ -7,13 +7,14 @@ from collections import deque
 from typing import Literal
 
 import numpy as np
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from scipy.signal import butter, iirnotch, sosfilt, tf2sos
 
 PROCESSING_PIPELINE_VERSION = "3.0.0"
 
 
 class EmgProcessingConfig(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     enabled: bool = False
     processing_sample_rate_hz: float = Field(default=1000, gt=0, le=20_000)
     sample_rate_source: Literal["DEVICE_CONFIGURED", "DEVICE_TIMESTAMP_ESTIMATED", "HOST_RATE_ESTIMATED"] = "DEVICE_CONFIGURED"
@@ -69,6 +70,7 @@ class ChannelProcessor:
 
     def process_batch(self, raws: list[float]) -> list[dict[str,float|None]]:
         array=np.asarray(raws,dtype=float);filtered=array.copy()
+        if not np.isfinite(array).all():raise ValueError("EMG processing requires finite raw samples")
         if self.main_sos is not None:filtered,self.main_zi=sosfilt(self.main_sos,filtered,zi=self.main_zi)
         if self.notch_sos is not None:filtered,self.notch_zi=sosfilt(self.notch_sos,filtered,zi=self.notch_zi)
         rectified=np.abs(filtered);rms=[]
@@ -81,6 +83,7 @@ class ChannelProcessor:
             values,self.envelope_zi=sosfilt(self.envelope_sos,rectified,zi=self.envelope_zi);envelopes=[float(x) for x in values]
         return [{"raw":float(raw),"filtered":float(filt),"rectified":float(rect),"rms":float(rms_value),"envelope":env} for raw,filt,rect,rms_value,env in zip(array,filtered,rectified,rms,envelopes)]
     def process(self, raw: float) -> dict[str,float|None]:
+        if not math.isfinite(raw):raise ValueError("EMG processing requires finite raw samples")
         filtered=float(raw)
         if self.main_sos is not None:
             y,self.main_zi=sosfilt(self.main_sos,[filtered],zi=self.main_zi);filtered=float(y[0])
@@ -107,7 +110,8 @@ class EmgProcessingPipeline:
         try:
             channels={}
             for key,raw in sample["channels"].items():
-                processor=self.processors.setdefault(key,ChannelProcessor(self.config));channels[key]=processor.process(float(raw))
+                if key not in self.processors:self.processors[key]=ChannelProcessor(self.config)
+                channels[key]=self.processors[key].process(float(raw))
             return {"sequence_id":sample["sequence_id"],"host_timestamp_ns":sample["host_timestamp_ns"],"channels":channels,"processing_version":self.config.processing_version,"config_hash":self.config.hash}
         except Exception as exc:
             self.error=f"PROCESSING DISABLED: {exc}";self.config=self.config.model_copy(update={"enabled":False});self.reset();self.error=f"PROCESSING DISABLED: {exc}";return None
@@ -117,7 +121,8 @@ class EmgProcessingPipeline:
         try:
             keys=list(samples[0]["channels"]);by_channel={}
             for key in keys:
-                processor=self.processors.setdefault(key,ChannelProcessor(self.config));by_channel[key]=processor.process_batch([float(sample["channels"][key]) for sample in samples])
+                if key not in self.processors:self.processors[key]=ChannelProcessor(self.config)
+                by_channel[key]=self.processors[key].process_batch([float(sample["channels"][key]) for sample in samples])
             return [{"sequence_id":sample["sequence_id"],"host_timestamp_ns":sample["host_timestamp_ns"],"channels":{key:by_channel[key][index] for key in keys},"processing_version":self.config.processing_version,"config_hash":self.config.hash} for index,sample in enumerate(samples)]
         except Exception as exc:
             self.error=f"PROCESSING DISABLED: {exc}";self.config=self.config.model_copy(update={"enabled":False});self.processors={};return []

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Download, FlaskConical, Play, Square } from "lucide-react";
+import { EmgResearchStudies } from "./EmgResearchStudies";
 
 type Model = { id:string; name:string; category:string; input_representation:string; estimated_cost:string; advantage:string; eligible:boolean; ineligible_reason?:string };
 type Catalog = { models:Model[]; functions:string[]; hardware_limit:string };
@@ -9,7 +10,7 @@ type Matrix = { labels:string[]; values:number[][] };
 type Metric = { macro_f1:number; macro_f1_ci95?:{lower:number;upper:number}|null; independent_subjects:number; uncertainty_status:string; balanced_accuracy:number; confusion_matrix:Matrix };
 type History = { epoch:number; training_loss:number; validation_loss?:number };
 type Result = { model:string; mathematical_method:string; validation:Metric; test:Metric; training_seconds:number; model_size_bytes:number; training_history:History[] };
-type Experiment = { experiment_id:string; status:string; stage:string; progress:number; error?:string; results?:{ results:Result[]; limitations:string[]; ranking_statement:string; data_readiness:{display_message:string;ranking_eligible:boolean} } };
+type Experiment = { experiment_id:string; status:string; stage:string; progress:number; error?:string; configuration?:{study?:string}; results?:{ results:Result[]; limitations:string[]; ranking_statement:string; data_readiness:{display_message:string;ranking_eligible:boolean} } };
 type Simulation = { time:number[]; mean_curve:number[]; gq_curve:number[]; reference_curve:number[]; methods:Record<string,{rmse:number}>; comparison:{winner:string;gq_rmse_improvement_percent:number|null} };
 
 const api = "/api/master/data/ml/emg-comparison";
@@ -34,7 +35,7 @@ export function EmgComparisonDashboard() {
   const [selected,setSelected]=useState(["LOGISTIC_REGRESSION","RANDOM_FOREST","MLP"]),[methods,setMethods]=useState(["ARITHMETIC_MEAN","GAUSSIAN_QUADRATURE"]);
   const [fn,setFn]=useState("CENTRAL_PEAK"),[simulation,setSimulation]=useState<Simulation|null>(null),[run,setRun]=useState<Experiment|null>(null),[error,setError]=useState(""),[amplitudes,setAmplitudes]=useState([.2,1,.4]);
 
-  useEffect(()=>{Promise.all([fetch(`${api}/catalog`),fetch(`${api}/experiments`)]).then(async([catalogResponse,historyResponse])=>{if(!catalogResponse.ok)throw new Error("Comparison catalog is unavailable");setCatalog(await catalogResponse.json());if(historyResponse.ok)setSaved(await historyResponse.json())}).catch(reason=>setError(String(reason)))},[]);
+  useEffect(()=>{Promise.all([fetch(`${api}/catalog`),fetch(`${api}/experiments`)]).then(async([catalogResponse,historyResponse])=>{if(!catalogResponse.ok)throw new Error("Comparison catalog is unavailable");setCatalog(await catalogResponse.json());if(historyResponse.ok)setSaved((await historyResponse.json() as Experiment[]).filter(item=>!item.configuration?.study))}).catch(reason=>setError(String(reason)))},[]);
   const refresh=useCallback(async(id:string)=>{const response=await fetch(`${api}/experiments/${id}`);if(!response.ok)throw new Error("Experiment status is unavailable");const item=await response.json();setRun(item);if(!["QUEUED","RUNNING","CANCEL_REQUESTED"].includes(item.status))setSaved(current=>[item,...current.filter(x=>x.experiment_id!==id)])},[]);
   useEffect(()=>{if(!run||!["QUEUED","RUNNING","CANCEL_REQUESTED"].includes(run.status))return;const timer=setInterval(()=>refresh(run.experiment_id).catch(reason=>setError(String(reason))),800);return()=>clearInterval(timer)},[run,refresh]);
   const arithmetic=useMemo(()=>amplitudes.reduce((a,b)=>a+b,0)/3,[amplitudes]),gaussian=useMemo(()=>amplitudes[0]*5/18+amplitudes[1]*4/9+amplitudes[2]*5/18,[amplitudes]);
@@ -50,6 +51,7 @@ export function EmgComparisonDashboard() {
     <header className="emgcmp-head"><div><span className="eyebrow">EMG mathematical processing {" · "} development-only research</span><h1>Mean vs Gaussian Quadrature</h1><p>Inspect real equations, simulate known spatial functions, and run paired model comparisons with the same subjects, split, seed, and features.</p></div><Activity/></header>
     {error&&<div className="emgcmp-alert">{error}</div>}
     <div className="emgcmp-safety"><strong>Hardware eligibility</strong><span>{catalog?.hardware_limit||"Checking channel geometry..."}</span></div>
+    <EmgResearchStudies/>
 
     <article className="emgcmp-card"><div className="emgcmp-card-title"><span>1</span><div><h2>Interactive three-channel demonstration</h2><p>Primary order n=3: nodes -sqrt(3/5), 0, +sqrt(3/5); normalized average weights 5/18, 4/9, 5/18.</p></div></div>
       <div className="emgcmp-geometry" aria-label="Three-channel Gauss-Legendre geometry"><i style={{left:"11.3%"}}>A<small>-0.7746</small></i><i style={{left:"50%"}}>B<small>0</small></i><i style={{left:"88.7%"}}>C<small>+0.7746</small></i></div>

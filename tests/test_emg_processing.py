@@ -17,6 +17,29 @@ def test_nyquist_and_config_hash():
  a=EmgProcessingConfig();b=EmgProcessingConfig(rms_window_ms=50)
  assert a.hash==EmgProcessingConfig().hash and a.hash!=b.hash
 
+def test_signed_raw_rectification_and_analytical_rms_preserve_input_units():
+ cfg=EmgProcessingConfig(enabled=True,dc_removal_enabled=False,bandpass_enabled=False,rms_window_ms=4)
+ processor=ChannelProcessor(cfg);raw=[-3.,4.,-3.,4.];before=raw.copy()
+ rows=processor.process_batch(raw)
+ assert raw==before
+ assert [row['raw'] for row in rows]==raw
+ assert [row['filtered'] for row in rows]==raw
+ assert [row['rectified'] for row in rows]==[3.,4.,3.,4.]
+ assert rows[-1]['rms']==pytest.approx(math.sqrt(12.5))
+ # Multiplication by a physical-unit conversion factor scales every amplitude
+ # representation by the same factor; this does not invent sensor calibration.
+ scaled=ChannelProcessor(cfg).process_batch([x*.001 for x in raw])
+ for a,b in zip(rows,scaled):
+  for key in ('raw','filtered','rectified','rms'):assert b[key]==pytest.approx(a[key]*.001)
+
+@pytest.mark.parametrize('value',[float('nan'),float('inf'),float('-inf')])
+def test_nonfinite_configuration_and_samples_are_rejected_without_poisoning_dsp(value):
+ with pytest.raises(ValidationError):EmgProcessingConfig(processing_sample_rate_hz=value)
+ processor=ChannelProcessor(EmgProcessingConfig())
+ with pytest.raises(ValueError):processor.process(value)
+ with pytest.raises(ValueError):processor.process_batch([1,value])
+ assert all(v is None or math.isfinite(v) for v in processor.process(1).values())
+
 def test_causal_chunk_consistency_rectification_and_rms():
  cfg=EmgProcessingConfig(enabled=True,notch_enabled=False)
  whole=EmgProcessingPipeline(cfg).process_rows(samples())

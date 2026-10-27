@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { MASTER_COOKIE, verifyMasterSession } from "@/lib/masterAuth";
 import { normalizeMasterResponse } from "@/lib/masterProxy";
+import { isMasterMutationOriginAllowed } from "@/lib/masterOrigin";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!verifyMasterSession(jar.get(MASTER_COOKIE)?.value)) return NextResponse.json({ error: { code: "NOT_AUTHENTICATED", message: "Master authorization required.", request_id: requestId } }, { status: 401 });
   if (!["GET", "HEAD"].includes(request.method)) {
     const origin = request.headers.get("origin");
-    if (origin && origin !== request.nextUrl.origin) return NextResponse.json({ error: { code: "CROSS_ORIGIN_REJECTED", message: "Cross-origin Master mutation rejected.", request_id: requestId } }, { status: 403 });
+    if (!isMasterMutationOriginAllowed(origin, request.nextUrl.origin, process.env.RENDER_EXTERNAL_URL)) return NextResponse.json({ error: { code: "CROSS_ORIGIN_REJECTED", message: "Cross-origin Master mutation rejected.", request_id: requestId } }, { status: 403 });
   }
   const token = process.env.MASTER_INTERNAL_TOKEN;
   if (!token) return NextResponse.json({ error: { code: "DATABASE_NOT_CONFIGURED", message: "Master data service is not configured.", request_id: requestId } }, { status: 503 });

@@ -33,7 +33,7 @@ function isJsonType(value: string) {
 }
 
 function isBinaryPath(path: string) {
-  return /\/(?:files|artifacts|media|download)(?:\/|$)/i.test(path)
+  return /\/(?:files|artifacts|media|download|figures)(?:\/|$)/i.test(path)
     || /\/(?:manifest|training-manifest|export)(?:\/|$)/i.test(path)
     || /\.(?:csv|zip|mp4|webm|jpe?g|png|bin)$/i.test(path);
 }

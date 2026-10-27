@@ -75,6 +75,16 @@ def config(**values):
     )
 
 
+def test_nonfinite_packets_do_not_verify_a_stream_or_reach_the_graph():
+    manager, samples, _ = manager_with([b'nan,1\n', b'2,inf\n', b'-3,4\n', b'5,6\n', b'7,8\n'], config())
+    try:
+        assert wait_for(manager, 'STREAMING') == 'STREAMING'
+        assert samples == [[-3.,4.], [5.,6.], [7.,8.]]
+        assert manager.status()['rejection_categories']['NON_NUMERIC'] == 2
+    finally:
+        manager.stop()
+
+
 def test_boot_text_and_malformed_lines_do_not_prevent_verification():
     manager, samples, states = manager_with(
         [b"ESP-ROM:boot\r\n", b"bad,data\n", b"1,2\n", b"2,3\r\n", b"3,4\n"], config()

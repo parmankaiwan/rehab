@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import base64
 import json
+import hashlib
+import gc
+import os
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -45,6 +49,8 @@ TINY_PNG = base64.b64decode(
 def main() -> int:
     config = SupabaseVaultConfig.from_env()
     config.validate()
+    if config.url.rstrip('/') != 'https://luhrcmbtijdtbmqzommk.supabase.co':
+        raise RuntimeError('Refusing to create fixtures in an unexpected Supabase project')
     marker = uuid.uuid4().hex[:10]
 
     cv = BrowserCollectionRepository(config)
@@ -69,6 +75,8 @@ def main() -> int:
         [ArtifactUpload("image.png", "image/png", TINY_PNG), ArtifactUpload("pose_observations.json", "application/json", b"[]")],
         f"cv-real-{marker}",
     )
+    cv.update_sample(cv_sample["sample_id"], BrowserSampleUpdate(reviewed_label="neutral", review_status="REJECTED", training_eligible=False, notes="Synthetic reject/relabel acceptance"))
+    assert cv.get_sample(cv_sample["sample_id"])["review_status"] == "REJECTED"
     cv.update_sample(cv_sample["sample_id"], BrowserSampleUpdate(reviewed_label="reaching", review_status="APPROVED", training_eligible=True, notes="Synthetic acceptance"))
     cv.set_sample_trashed(cv_sample["sample_id"], True)
     assert cv.get_sample(cv_sample["sample_id"]) is None
@@ -98,7 +106,9 @@ def main() -> int:
             "channel_count": 1, "sample_count": 3, "duration_seconds": 0.003,
             "metadata": {"raw_units": "ADC_COUNTS", "dataset_id": emg_dataset["dataset_id"]},
         }, folder)
-    emg.update_recording(emg_record["recording_id"], EmgRecordingUpdate(research_label="active", review_status="APPROVED", review_notes="Synthetic acceptance", training_eligible=True))
+    emg.update_recording(emg_record["recording_id"], EmgRecordingUpdate(review_status="REJECTED", training_eligible=False, review_notes="Synthetic rejection acceptance"))
+    assert emg.get_recording(emg_record["recording_id"])["review_status"] == "REJECTED"
+    emg.update_recording(emg_record["recording_id"], EmgRecordingUpdate(research_label="active", review_status="APPROVED", review_notes="Synthetic acceptance", training_eligible=True, excluded=False))
     emg.set_recording_trashed(emg_record["recording_id"], True)
     assert all(item["recording_id"] != emg_record["recording_id"] for item in emg.list_recordings(emg_dataset["dataset_id"]))
     emg.set_recording_trashed(emg_record["recording_id"], False)
@@ -116,14 +126,69 @@ def main() -> int:
     unauthenticated = httpx.get(f"{config.url}/rest/v1/flexmap_browser_datasets?select=dataset_id", timeout=10)
     assert unauthenticated.status_code in {401, 403}
 
-    print(json.dumps({
+    # Only fixture records are changed: prevent synthetic samples entering training.
+    cv.update_sample(cv_sample['sample_id'], BrowserSampleUpdate(training_eligible=False, notes='Synthetic acceptance fixture; never use for human-research training'))
+    emg.update_recording(emg_record['recording_id'], EmgRecordingUpdate(training_eligible=False, excluded=True, exclusion_reason='Synthetic acceptance fixture'))
+
+    # Separate API processes, not merely new repository objects. Each process
+    # starts with an empty local vault and must retrieve the real cloud artifacts.
+    child_env = os.environ.copy()
+    child_env['FLEXMAP_DATA_BACKEND'] = 'supabase'
+    child_env['FLEXMAP_MASTER_INTERNAL_TOKEN'] = uuid.uuid4().hex
+    command = [sys.executable, str(Path(__file__).resolve()), '--verify-persisted', cv_sample['sample_id'], emg_record['recording_id']]
+    first = subprocess.run(command, env=child_env, capture_output=True, text=True, timeout=90)
+    second = subprocess.run(command, env=child_env, capture_output=True, text=True, timeout=90)
+    if first.returncode or second.returncode:
+        raise RuntimeError('Fresh-process API persistence verification failed; credentials and private responses suppressed')
+    first_result, second_result = json.loads(first.stdout), json.loads(second.stdout)
+    assert first_result == second_result
+
+    report = {
         "state": "PASS", "project": "luhrcmbtijdtbmqzommk", "marker": marker,
         "cv": {"dataset_id": cv_dataset["dataset_id"], "sample_id": cv_sample["sample_id"], "artifact_verified": True, "restart_verified": True, "trash_restore_verified": True},
         "emg": {"dataset_id": emg_dataset["dataset_id"], "recording_id": emg_record["recording_id"], "waveform_points": len(waveform["samples"]), "restart_verified": True, "trash_restore_verified": True},
         "cross_vault_isolation": True, "unauthorized_access_blocked": True,
-    }, indent=2))
+        "fixtures_excluded_from_training": True,
+        "fresh_api_process_persistence": first_result,
+    }
+    report_path = ROOT / 'data' / 'runtime' / 'real-vault-verification' / f'{marker}.json'
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def verify_persisted(cv_id: str, emg_id: str) -> int:
+    with tempfile.TemporaryDirectory(prefix='flexmap-persistence-api-') as temporary:
+        os.environ['FLEXMAP_DATASET_ROOT'] = temporary
+        from fastapi.testclient import TestClient
+        from backend.app import app
+        with TestClient(app) as client:
+            headers = {'x-flexmap-master-token': os.environ['FLEXMAP_MASTER_INTERNAL_TOKEN']}
+            cv_path = f'/api/master/browser-collections/samples/{cv_id}'
+            emg_path = f'/api/master/emg/cloud-recordings/{emg_id}'
+            cv_response = client.get(cv_path, headers=headers)
+            emg_response = client.get(emg_path, headers=headers)
+            assert cv_response.status_code == emg_response.status_code == 200
+            image = client.get(f'{cv_path}/artifacts/image.png', headers=headers)
+            waveform = client.get(f'{emg_path}/waveform', headers=headers)
+            assert image.status_code == waveform.status_code == 200
+            assert image.content == TINY_PNG
+            assert [row['channel_1'] for row in waveform.json()['samples']] == ['100', '120', '90']
+            assert client.get(cv_path).status_code in (401,403)
+            assert client.get(emg_path).status_code in (401,403)
+            assert cv_response.json()['training_eligible'] is False
+            assert emg_response.json()['training_eligible'] is False
+            assert client.get(f'/api/master/browser-collections/samples/{emg_id}', headers=headers).status_code == 404
+            assert client.get(f'/api/master/emg/cloud-recordings/{cv_id}', headers=headers).status_code == 404
+            print(json.dumps({'cv_id': cv_id, 'emg_id': emg_id, 'cv_sha256': hashlib.sha256(image.content).hexdigest(), 'waveform_sha256': hashlib.sha256(waveform.content).hexdigest(), 'unauthorized_blocked': True}))
+        # sqlite3 connection context managers commit but do not close; collect
+        # unreachable initialization handles before Windows removes the test DB.
+        gc.collect()
     return 0
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == '--verify-persisted':
+        raise SystemExit(verify_persisted(sys.argv[2], sys.argv[3]))
     raise SystemExit(main())

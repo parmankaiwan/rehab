@@ -15,7 +15,7 @@ const title = (value: string) => value.replaceAll("_", " ").toLowerCase().replac
 const measurementKeys = ["LEFT_ELBOW_ANGLE", "RIGHT_ELBOW_ANGLE", "LEFT_WRIST_SPEED", "RIGHT_WRIST_SPEED", "TRUNK_ANGLE", "TRUNK_CENTER_OFFSET", "SHOULDER_DIFFERENCE"];
 
 export function CvLivePage() {
-  const [source, setSource] = useState<CvSource>("ENGINE");
+  const [source, setSource] = useState<CvSource>("BROWSER");
   const browser = useBrowserPose(source === "BROWSER");
   const engine = usePostureStream(source === "ENGINE");
   const snapshot = source === "BROWSER" ? browser.snapshot : engine.snapshot;
@@ -57,7 +57,7 @@ export function CvLivePage() {
     </div>
 
     {state !== "LIVE" && <div className="live-warning">
-      <strong>{state === "STALE" ? "Camera stream stale" : source === "BROWSER" ? "Browser camera unavailable" : "CV connection unavailable"}</strong>
+      <strong>{state === "STALE" ? "Camera stream stale" : source === "BROWSER" ? state === "ERROR" ? "Browser camera unavailable" : browser.state === "CAMERA_READY" ? "Camera ready — waiting for pose" : "Starting browser camera" : "CV connection unavailable"}</strong>
       <span>{state === "STALE"
         ? "The last sensor snapshot is no longer current."
         : source === "BROWSER"
@@ -79,7 +79,7 @@ export function CvLivePage() {
         browserState={source === "BROWSER" ? browser.state : undefined}
       />
       <aside className="live-diagnostics">
-        <CvSystem source={source} state={state} snapshot={snapshot} age={age} socket={source === "BROWSER" ? "NOT REQUIRED" : engine.connectionState}/>
+        <CvSystem source={source} state={state} snapshot={snapshot} age={age} socket={source === "BROWSER" ? "NOT REQUIRED" : engine.connectionState} cameraReady={browser.state === "CAMERA_READY" || browser.state === "LIVE"} delegate={browser.delegate} inferenceCount={browser.inferenceCount}/>
         <ReadyMonitor snapshot={snapshot} stage={coach.stage} instruction={coach.primary}/>
       </aside>
     </div>
@@ -89,7 +89,7 @@ export function CvLivePage() {
   </section>;
 }
 
-function CvSystem({ source, state, snapshot, age, socket }: { source: CvSource; state: LiveState; snapshot: PostureSnapshot | null; age: number | null; socket: string }) {
+function CvSystem({ source, state, snapshot, age, socket, cameraReady, delegate, inferenceCount }: { source: CvSource; state: LiveState; snapshot: PostureSnapshot | null; age: number | null; socket: string; cameraReady: boolean; delegate: string | null; inferenceCount: number }) {
   const performance = snapshot?.exercise_snapshot?.performance;
   const scheduler = performance?.pose_scheduler;
   const fmt = (value?: number | null, suffix = " ms") => value == null ? "Unavailable" : value.toFixed(1) + suffix;
@@ -100,7 +100,11 @@ function CvSystem({ source, state, snapshot, age, socket }: { source: CvSource; 
       <div><dt>CV engine</dt><dd>{snapshot?.connected && state === "LIVE" ? "LIVE" : "WAITING"}</dd></div>
       <div><dt>Pose tracking</dt><dd>{snapshot?.tracking_quality || "Waiting"}</dd></div>
       <div><dt>Overall posture</dt><dd>{snapshot?.overall_state || "Waiting"}</dd></div>
-      <div><dt>Camera</dt><dd>{snapshot?.fps != null ? snapshot.fps.toFixed(1) + " FPS" : "Not available"}</dd></div>
+      <div><dt>Camera</dt><dd>{snapshot?.fps != null ? snapshot.fps.toFixed(1) + " FPS" : source === "BROWSER" && cameraReady ? "READY" : "Not available"}</dd></div>
+      {source === "BROWSER" && <>
+        <div><dt>Pose model</dt><dd>{delegate ? `READY (${delegate})` : "NOT READY"}</dd></div>
+        <div><dt>Inference results</dt><dd>{inferenceCount}</dd></div>
+      </>}
       {source === "ENGINE" && <>
         <div><dt>Pose results</dt><dd>{fmt(scheduler?.pose_result_hz, " Hz")}</dd></div>
         <div><dt>Pose latency p95</dt><dd>{fmt(scheduler?.pose_latency_p95_ms)}</dd></div>

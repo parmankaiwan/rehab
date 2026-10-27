@@ -7,7 +7,9 @@ import { masterApiGet } from "@/lib/masterApi";
 
 type Cv = { cv_engine: boolean; camera_live: boolean; pose_receiving: boolean; storage_available: boolean; free_storage_bytes?: number; cv_fps?: number | null };
 type Emg = { connection_state: string; serial_port?: string | null; baud_rate?: number | null; channels?: unknown[]; received_rate_hz?: number; latest_data_age_ms?: number | null; invalid_packets?: number; recorder_drops?: number };
+type Storage = { state: string; mode: string };
 type Lifecycle = {
+  available?: boolean;
   deployment: "LOCAL_WINDOWS";
   application: string;
   backend: { ready: boolean; managed: boolean };
@@ -30,20 +32,23 @@ export function SystemStatusStrip({ detailed = false }: { detailed?: boolean }) 
   const [cv, setCv] = useState<Cv | null>(null);
   const [emg, setEmg] = useState<Emg | null>(null);
   const [lifecycle, setLifecycle] = useState<Lifecycle | null>(null);
+  const [storage, setStorage] = useState<Storage | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState("");
   const [message, setMessage] = useState("");
   const [errors, setErrors] = useState({ cv: false, emg: false });
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, b, c] = await Promise.allSettled([
+    const [a, b, c, d] = await Promise.allSettled([
       masterApiGet<Cv>("/api/master/data/recordings/preflight", { retries: 1 }),
       masterApiGet<Emg>("/api/master/data/emg/status", { retries: 1 }),
       masterApiGet<Lifecycle>("/api/master/data/lifecycle/status", { retries: 0, timeoutMs: 3000 }),
+      masterApiGet<Storage>("/api/master/data/storage/status", { retries: 0 }),
     ]);
     if (a.status === "fulfilled") { setCv(a.value); setErrors((value) => ({ ...value, cv: false })); } else setErrors((value) => ({ ...value, cv: true }));
     if (b.status === "fulfilled") { setEmg(b.value); setErrors((value) => ({ ...value, emg: false })); } else setErrors((value) => ({ ...value, emg: true }));
-    setLifecycle(c.status === "fulfilled" ? c.value : null);
+    setLifecycle(c.status === "fulfilled" && c.value.available !== false ? c.value : null);
+    setStorage(d.status === "fulfilled" ? d.value : null);
     setLoading(false);
   }, []);
   useEffect(() => { void load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, [load]);
@@ -68,7 +73,7 @@ export function SystemStatusStrip({ detailed = false }: { detailed?: boolean }) 
     ["CV engine", cvRunning, cvRunning ? "RUNNING" : "OFFLINE"],
     ["Camera", lifecycle ? lifecycle.cv.camera_live : !errors.cv && !!cv?.camera_live, lifecycle?.cv.camera_live || cv?.camera_live ? "CONNECTED" : "UNAVAILABLE"],
     ["EMG signal", emgRunning, emgRunning ? "LIVE" : lifecycle?.emg.state || emg?.connection_state || "DISCONNECTED"],
-    ["Dataset storage", lifecycle?.supabase.state === "READY" || (!errors.cv && !!cv?.storage_available), lifecycle?.supabase.state || (cv?.storage_available ? "READY" : "UNAVAILABLE")],
+    ["Dataset storage", storage?.state === "READY" || storage?.state === "LOCAL_READY", storage?.state || "STATUS UNAVAILABLE"],
   ] as const;
   if (!detailed) return <div className="system-status">{items.map(([name, ok, label]) => <div key={name}><i className={ok ? "online" : "offline"}/><span>{name}</span><strong>{label}</strong></div>)}</div>;
   return <div>
@@ -83,8 +88,8 @@ export function SystemStatusStrip({ detailed = false }: { detailed?: boolean }) 
     <div className="system-sections">
       <section className="master-card"><h2>Application</h2><dl><div><dt>Mode</dt><dd>{lifecycle ? "Local Windows application" : "Hosted / independent services"}</dd></div><div><dt>Lifecycle</dt><dd>{lifecycle?.application || "Not supervisor-managed"}</dd></div><div><dt>FastAPI</dt><dd>{lifecycle?.backend.ready || cv ? "Connected" : "Unavailable"}</dd></div><div><dt>Website</dt><dd>{lifecycle?.frontend.ready === false ? "Unavailable" : "Ready"}</dd></div></dl></section>
       <section className="master-card"><h2>Computer Vision</h2>{errors.cv ? <p className="master-alert">CV status unavailable. The device state is unknown.</p> : <dl><div><dt>Engine</dt><dd>{lifecycle?.cv.process_running || cv?.cv_engine ? "Running" : "Offline"}</dd></div><div><dt>Camera</dt><dd>{lifecycle?.cv.camera_live || cv?.camera_live ? "Connected" : "Unavailable"}</dd></div><div><dt>Owner</dt><dd>{lifecycle?.cv.owner || "External / browser selected"}</dd></div><div><dt>Pose stream</dt><dd>{cv?.pose_receiving ? "Receiving" : "Waiting"}</dd></div><div><dt>CV FPS</dt><dd>{cv?.cv_fps?.toFixed(1) || "Unavailable"}</dd></div></dl>}<Link href="/master/live/cv">Open CV Live</Link></section>
-      <section className="master-card"><h2>EMG</h2>{errors.emg ? <p className="master-alert">EMG status unavailable. The physical device state is unknown.</p> : <dl><div><dt>Agent</dt><dd>{lifecycle?.hardware_agent.running ? "Running" : "Offline"}</dd></div><div><dt>Board</dt><dd>{lifecycle?.emg.board_connected ? "Connected" : "Disconnected"}</dd></div><div><dt>Signal</dt><dd>{lifecycle?.emg.signal_live ? "Live" : "No signal"}</dd></div><div><dt>Port</dt><dd>{lifecycle?.emg.port || emg?.serial_port || "Not connected"}</dd></div><div><dt>Sample rate</dt><dd>{emg?.received_rate_hz ? `${emg.received_rate_hz.toFixed(1)} Hz` : "Unavailable"}</dd></div><div><dt>Data age</dt><dd>{emg?.latest_data_age_ms != null ? `${emg.latest_data_age_ms.toFixed(1)} ms` : "Unavailable"}</dd></div></dl>}<Link href="/master/live/emg">Open EMG Live</Link></section>
-      <section className="master-card"><h2>Storage</h2><dl><div><dt>Supabase</dt><dd>{lifecycle?.supabase.state || "Status through data service"}</dd></div><div><dt>Local recording space</dt><dd>{cv?.storage_available ? "Ready" : "Unavailable"}</dd></div><div><dt>Free</dt><dd>{cv?.free_storage_bytes != null ? `${(cv.free_storage_bytes / 1073741824).toFixed(1)} GB` : "Unavailable"}</dd></div></dl></section>
+      <section className="master-card"><h2>EMG</h2>{errors.emg ? <p className="master-alert">EMG status unavailable. The physical device state is unknown.</p> : <dl><div><dt>Agent</dt><dd>{lifecycle ? lifecycle.hardware_agent.running ? "Running" : "Offline" : "Backend / external owner"}</dd></div><div><dt>Board</dt><dd>{lifecycle?.emg.board_connected || emgRunning ? "Connected" : "Disconnected"}</dd></div><div><dt>Signal</dt><dd>{emgRunning ? "Live" : "No signal"}</dd></div><div><dt>Port</dt><dd>{lifecycle?.emg.port || emg?.serial_port || "Not connected"}</dd></div><div><dt>Sample rate</dt><dd>{emg?.received_rate_hz ? `${emg.received_rate_hz.toFixed(1)} Hz` : "Unavailable"}</dd></div><div><dt>Data age</dt><dd>{emg?.latest_data_age_ms != null ? `${emg.latest_data_age_ms.toFixed(1)} ms` : "Unavailable"}</dd></div></dl>}<Link href="/master/live/emg">Open EMG Live</Link></section>
+      <section className="master-card"><h2>Storage</h2><dl><div><dt>Authority</dt><dd>{storage?.mode || "Unknown"}</dd></div><div><dt>Data service</dt><dd>{storage?.state || "STATUS UNAVAILABLE"}</dd></div><div><dt>Local recording space</dt><dd>{cv?.storage_available ? "Ready" : "Unavailable"}</dd></div><div><dt>Free</dt><dd>{cv?.free_storage_bytes != null ? `${(cv.free_storage_bytes / 1073741824).toFixed(1)} GB` : "Unavailable"}</dd></div></dl></section>
     </div>
   </div>;
 }

@@ -18,12 +18,33 @@ beforeEach(() => {
   vi.stubGlobal("confirm", vi.fn(() => true));
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
-    const body = url.includes("lifecycle/status") ? lifecycle : url.includes("recordings/preflight") ? cv : url.includes("emg/status") ? emg : { accepted: true };
+    const body = url.includes("lifecycle/status") ? lifecycle : url.includes("storage/status") ? { state: "READY", mode: "SUPABASE" } : url.includes("recordings/preflight") ? cv : url.includes("emg/status") ? emg : { accepted: true };
     return new Response(JSON.stringify(body), { status: init?.method === "POST" ? 202 : 200, headers: { "content-type": "application/json" } });
   }));
 });
 
 describe("FlexMap lifecycle status", () => {
+  it("does not claim cloud readiness from free local disk space", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const url = String(input);
+      const body = url.includes("storage/status") ? { state: "DATABASE_UNAVAILABLE", mode: "SUPABASE" } : url.includes("lifecycle/status") ? lifecycle : url.includes("emg/status") ? emg : cv;
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+    render(<SystemStatusStrip />);
+    await waitFor(() => expect(screen.getByText("Dataset storage").parentElement).toHaveTextContent("DATABASE_UNAVAILABLE"));
+    expect(screen.getByText("Dataset storage").parentElement?.querySelector("i")).toHaveClass("offline");
+  });
+  it("keeps independent-mode controls disabled while showing a real streaming board", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const body = String(input).includes("lifecycle/status") ? { available: false } : String(input).includes("emg/status") ? emg : cv;
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+    render(<SystemStatusStrip detailed/>);
+    await screen.findByText("Hosted / independent services");
+    expect(screen.getByText("Backend / external owner")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Exit FlexMap/ })).toBeDisabled();
+  });
   it("shows verified local device and storage state", async () => {
     render(<SystemStatusStrip detailed/>);
     expect(await screen.findByText("Local Windows application")).toBeInTheDocument();

@@ -7,6 +7,11 @@ import json
 import random
 import sqlite3
 import time
+import threading
+import uuid
+import multiprocessing
+import tracemalloc
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +35,10 @@ from .emg_deep import predict_classifier, save_classifier, torch_status, train_c
 from .emg_math import FUNCTIONS, gauss_legendre_rule, report_zip, simulate, slider_demo, spatial_function
 from .master_dataset_api import require_master
 from .ml_cloud import MlCloudRepository
+from .emg_research import StudyARequest, FUNCTIONS_V2, run_study_a
+from .emg_spatial_learning import StudyBRequest, run_study_b, VARIANTS
+from .emg_research_exports import finish_artifacts, csv_bytes, package
+from .emg.research_protocol import TestDeviceConfig, test_stream
 
 
 router=APIRouter(prefix="/api/master/ml/emg-comparison",tags=["EMG Research Comparison"],dependencies=[Depends(require_master)])
@@ -37,6 +46,8 @@ DB_PATH=dataset_settings().database_path
 ROOT=Path(__file__).resolve().parent.parent/"data"/"ml"/"emg-comparisons";ROOT.mkdir(parents=True,exist_ok=True)
 executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix="flexmap-emg-research")
 ml_cloud=MlCloudRepository()
+research_processes=ProcessPoolExecutor(max_workers=1)
+research_queue=threading.BoundedSemaphore(4)
 MIN_INDEPENDENT_SUBJECTS_FOR_INTERVALS=5
 
 def now():return datetime.now(timezone.utc).isoformat()
@@ -66,7 +77,8 @@ def initialize():
   db.execute("CREATE TABLE IF NOT EXISTS emg_comparison_experiments(experiment_id TEXT PRIMARY KEY,name TEXT NOT NULL,source_type TEXT NOT NULL,task TEXT NOT NULL,status TEXT NOT NULL,configuration_json TEXT NOT NULL,results_json TEXT,artifact_manifest_json TEXT NOT NULL,progress REAL NOT NULL,stage TEXT NOT NULL,error TEXT,created_at TEXT NOT NULL,completed_at TEXT)")
   db.execute("UPDATE emg_comparison_experiments SET status='FAILED',stage='INTERRUPTED',error=COALESCE(error,'Backend restarted before training completed'),completed_at=? WHERE status IN ('QUEUED','RUNNING')",(now(),))
   db.execute("UPDATE emg_comparison_experiments SET status='CANCELLED',stage='CANCELLED',completed_at=? WHERE status='CANCEL_REQUESTED'",(now(),))
-initialize()
+if multiprocessing.current_process().name == "MainProcess":
+ initialize()
 
 class DemoRequest(BaseModel):amplitudes:list[float]=Field(min_length=3,max_length=3)
 class SimulationRequest(BaseModel):function:str="CENTRAL_PEAK";order:int=Field(default=3,ge=2,le=5);noise_std:float=Field(default=0,ge=0,le=1);position_error:float=Field(default=0,ge=0,le=.5);seed:int=42;frames:int=Field(default=120,ge=20,le=2000)
@@ -212,7 +224,11 @@ def create_experiment(request:ComparisonRequest):
  executor.submit(_train,identifier);return get_experiment(identifier)
 @router.get("/experiments")
 def experiments():
- with connect() as db:return [_public(x) for x in db.execute("SELECT * FROM emg_comparison_experiments ORDER BY created_at DESC")]
+ with connect() as db:
+  items=[_public(x) for x in db.execute("SELECT * FROM emg_comparison_experiments ORDER BY created_at DESC")]
+ for item in items:
+  if item["configuration"].get("study"):item["results"]=None
+ return items
 @router.get("/experiments/{experiment_id}")
 def get_experiment(experiment_id:str):
  with connect() as db:row=db.execute("SELECT * FROM emg_comparison_experiments WHERE experiment_id=?",(experiment_id,)).fetchone()
@@ -228,8 +244,85 @@ def cancel_experiment(experiment_id:str):
 def export_experiment(experiment_id:str,extension:Literal["json","csv","zip"]):
  item=get_experiment(experiment_id)
  if item["status"]!="COMPLETED":raise HTTPException(409,"Experiment is not complete")
+ if item["configuration"].get("study"):
+  base=ROOT/experiment_id
+  content=json.dumps(item,indent=2).encode() if extension=="json" else csv_bytes(item["results"]) if extension=="csv" else package(base)
+  return Response(content,media_type={"json":"application/json","csv":"text/csv","zip":"application/zip"}[extension],headers={"Content-Disposition":f'attachment; filename="{experiment_id}.{extension}"'})
  if extension=="json":return Response(json.dumps(item,indent=2),media_type="application/json",headers={"Content-Disposition":f'attachment; filename="{experiment_id}.json"'})
  if extension=="zip":return Response(report_zip(item),media_type="application/zip",headers={"Content-Disposition":f'attachment; filename="{experiment_id}.zip"'})
  output=io.StringIO();writer=csv.DictWriter(output,fieldnames=["model","mathematical_method","independent_subjects","validation_macro_f1","test_macro_f1","training_seconds","inference_seconds","model_size_bytes","evaluation_scope"]);writer.writeheader()
  for result in item["results"]["results"]:writer.writerow({"model":result["model"],"mathematical_method":result["mathematical_method"],"independent_subjects":result["independent_subjects"],"validation_macro_f1":result["validation"]["macro_f1"],"test_macro_f1":result["test"]["macro_f1"],"training_seconds":result["training_seconds"],"inference_seconds":result["test"]["inference_seconds"],"model_size_bytes":result["model_size_bytes"],"evaluation_scope":result["evaluation_scope"]})
  return Response(output.getvalue(),media_type="text/csv",headers={"Content-Disposition":f'attachment; filename="{experiment_id}.csv"'})
+
+
+def _research_job(identifier, config, database, root):
+ """Child process shares only experiment DB; never starts hardware agents."""
+ global DB_PATH,ROOT
+ DB_PATH=Path(database);ROOT=Path(root)
+ def cancelled():return _cancel_requested(identifier)
+ def progress(value):
+  with connect() as db:db.execute("UPDATE emg_comparison_experiments SET progress=? WHERE experiment_id=? AND status='RUNNING'",(value,identifier))
+ try:
+  tracemalloc.start()
+  if cancelled():raise InterruptedError("Cancelled before execution")
+  with connect() as db:db.execute("UPDATE emg_comparison_experiments SET status='RUNNING',stage='RESEARCH' WHERE experiment_id=?",(identifier,))
+  base=ROOT/identifier;base.mkdir(parents=True,exist_ok=True)
+  result=run_study_a(StudyARequest.model_validate(config),cancelled,progress) if config["study"]=="A" else run_study_b(StudyBRequest.model_validate(config),base,cancelled,progress)
+  _,peak=tracemalloc.get_traced_memory();result["memory_measurement"]={"python_peak_traced_bytes":peak,"scope":"Python allocations during research execution; excludes native tensor memory and export rendering"}
+  if cancelled():raise InterruptedError("Cancelled before export")
+  result["run_timestamp"]=now();manifest=finish_artifacts(result,base,identifier,config)
+  if cancelled():raise InterruptedError("Cancelled during export")
+  with connect() as db:db.execute("UPDATE emg_comparison_experiments SET status='COMPLETED',stage='COMPLETED',progress=1,results_json=?,artifact_manifest_json=?,completed_at=? WHERE experiment_id=?",(json.dumps(result,allow_nan=False),json.dumps(manifest),now(),identifier))
+ except Exception as exc:
+  status="CANCELLED" if isinstance(exc,InterruptedError) else "FAILED"
+  with connect() as db:db.execute("UPDATE emg_comparison_experiments SET status=?,stage=?,error=?,completed_at=? WHERE experiment_id=?",(status,status,str(exc),now(),identifier))
+ finally:tracemalloc.stop()
+
+
+@router.get("/research/catalog")
+def research_catalog():
+ return {"functions":FUNCTIONS_V2,"variants":VARIANTS+["GQ_PLUS_FEATURES","RAW_MULTICHANNEL"],"models":["MLP","CNN_1D","TCN","GRU","RANDOM_FOREST"],"source_type":"SYNTHETIC MATHEMATICAL DATA","hardware":"NOT TESTED — PHYSICAL HARDWARE REQUIRED","protocol":"FLEXMAP_EMG_V2","limits":{"queued_jobs":4,"test_scenarios":120}}
+
+
+@router.post("/research/experiments")
+def create_research(request:StudyARequest | StudyBRequest):
+ if not research_queue.acquire(blocking=False):raise HTTPException(429,"Research worker queue is full")
+ identifier="EMGR-"+uuid.uuid4().hex;config=request.model_dump()
+ try:
+  with connect() as db:db.execute("INSERT INTO emg_comparison_experiments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(identifier,f"Study {request.study}","SYNTHETIC_SIMULATION",getattr(request,"task","SPATIAL_INTEGRAL_ESTIMATION"),"QUEUED",json.dumps(config),None,"[]",0,"QUEUED",None,now(),None))
+  future=research_processes.submit(_research_job,identifier,config,str(DB_PATH),str(ROOT))
+  def completed(future):
+   try:
+    error=future.exception() if hasattr(future,"exception") else None
+    if error:
+     with connect() as db:db.execute("UPDATE emg_comparison_experiments SET status='FAILED',stage='WORKER_FAILURE',error=?,completed_at=? WHERE experiment_id=? AND status IN ('QUEUED','RUNNING','CANCEL_REQUESTED')",(str(error),now(),identifier))
+   finally:research_queue.release()
+  future.add_done_callback(completed)
+ except Exception:
+  research_queue.release();raise
+ return get_experiment(identifier)
+
+
+@router.get("/experiments/{experiment_id}/figures/{filename}")
+def research_figure(experiment_id:str,filename:Literal["study_a.svg","study_a.png","study_b.svg","study_b.png"]):
+ from fastapi.responses import FileResponse
+ item=get_experiment(experiment_id)
+ if item["status"]!="COMPLETED":raise HTTPException(409,"Experiment is not complete")
+ if filename not in {a["name"] for a in item["artifact_manifest"]}:raise HTTPException(404,"Figure not found")
+ return FileResponse(ROOT/experiment_id/filename,media_type="image/svg+xml" if filename.endswith("svg") else "image/png",filename=filename)
+
+
+@router.post("/research/test-device")
+def research_test_device(request:TestDeviceConfig):
+ identifier="TEST-"+uuid.uuid4().hex;folder=ROOT/identifier
+ return {"test_recording_id":identifier,**test_stream(request,folder)}
+
+
+@router.get("/research/test-device/{identifier}")
+def research_test_device_read(identifier:str):
+ if not identifier.startswith("TEST-") or not identifier[5:].isalnum():raise HTTPException(404,"Test recording not found")
+ base=ROOT/identifier;report=base/"test_device_report.json";recording=base/"test_device_recording.json"
+ if not report.is_file() or not recording.is_file():raise HTTPException(404,"Test recording not found")
+ item=json.loads(report.read_text(encoding="utf-8"))
+ if hashlib.sha256(recording.read_bytes()).hexdigest()!=item["recording_integrity"]["sha256"]:raise HTTPException(409,"Test recording checksum mismatch")
+ return {"test_recording_id":identifier,**item}

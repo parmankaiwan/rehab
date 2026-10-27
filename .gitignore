@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 web/node_modules/
 web/.next/
+web/.next-*/
 
 # Local secrets and environment overrides
 .env

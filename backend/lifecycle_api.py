@@ -81,6 +81,10 @@ def _supervisor(request: Request, path: str, method: str = "GET", payload: dict 
 
 @router.get("/status")
 def lifecycle_status(request: Request):
+    if os.getenv("FLEXMAP_LOCAL_LIFECYCLE_ENABLED", "").lower() != "true":
+        # Capability discovery is not an exceptional condition. Hosted and
+        # independently started services deliberately have no process controls.
+        return {"available": False, "deployment": "HOSTED_OR_INDEPENDENT", "application": "UNMANAGED", "controls": {"reconnect_cv": False, "reconnect_emg": False, "exit": False}}
     return _supervisor(request, "/status")
 
 
@@ -101,6 +105,9 @@ async def lifecycle_camera_lease(request: Request):
 
 @router.post("/stop")
 def lifecycle_stop(request: Request):
+    # Reject unavailable/non-loopback controls before cancelling any recording
+    # or setting shutdown_requested. A rejected request must have no side effects.
+    _local_enabled(request)
     interrupted = prepare_for_shutdown()
     result = _supervisor(request, "/stop", "POST")
     return {**result, "state": "STOPPING", "interrupted_recordings": interrupted}

@@ -1,5 +1,5 @@
 from typing import Literal,Optional
-from pydantic import BaseModel,Field,model_validator
+from pydantic import BaseModel,ConfigDict,Field,model_validator
 class ChannelConfig(BaseModel):
  internal_id:str=Field(pattern=r"^channel_[1-4]$");display_name:str=Field(min_length=1,max_length=40);muscle_label:Optional[str]=Field(default=None,max_length=64);body_side:Optional[Literal["LEFT","RIGHT","UNKNOWN","N/A"]]=None;electrode_configuration:Optional[str]=Field(default=None,max_length=120);placement_notes:Optional[str]=Field(default=None,max_length=500);skin_prep_notes:Optional[str]=Field(default=None,max_length=500);sensor_type:Optional[str]=Field(default=None,max_length=80);electrode_spacing_mm:Optional[float]=Field(default=None,gt=0,le=200);electrode_orientation:Optional[str]=Field(default=None,max_length=120);placement_landmark_notes:Optional[str]=Field(default=None,max_length=500);reference_electrode_location:Optional[str]=Field(default=None,max_length=200);sensor_attachment_notes:Optional[str]=Field(default=None,max_length=500);electrode_protocol_id:Optional[str]=Field(default=None,max_length=100)
 class ConnectRequest(BaseModel):
@@ -16,9 +16,15 @@ class RecordingRequest(BaseModel):
   if not self.consent_recorded:raise ValueError("Documented research recording consent is required")
   return self
 class RemoteEmgSample(BaseModel):
+ model_config=ConfigDict(allow_inf_nan=False)
  values:list[float]=Field(min_length=1,max_length=4);device_sequence_id:Optional[int]=None;device_timestamp:Optional[float]=None;valid:bool=True
 class RemoteEmgBatch(BaseModel):
+ model_config=ConfigDict(allow_inf_nan=False)
  source_port:str=Field(min_length=1,max_length=100);baud_rate:int=Field(default=115200,ge=1200,le=3000000);protocol:Literal["VALUE_ONLY","TIMESTAMP_VALUE","CSV_CHANNELS","TIMESTAMP_CSV_CHANNELS","SEQUENCE_TIMESTAMP_CSV"]="CSV_CHANNELS";expected_sample_rate_hz:float=Field(default=1000,gt=0,le=10000);channel_count:int=Field(default=1,ge=1,le=4);device:dict=Field(default_factory=dict);samples:list[RemoteEmgSample]=Field(default_factory=list,max_length=500)
+ @model_validator(mode="after")
+ def consistent_channels(self):
+  if any(len(sample.values)!=self.channel_count for sample in self.samples):raise ValueError("Each sample must match the declared channel count")
+  return self
 class BaselineRequest(BaseModel):
  rehab_type:str;subject_id:str=Field(pattern=r"^[A-Za-z0-9_-]+$");duration_seconds:float=Field(default=5,ge=1,le=60);session_id:Optional[str]=None;collection_id:Optional[str]=None;protocol_id:Optional[str]=None;protocol_version:Optional[int]=Field(default=None,ge=1);baseline_group_id:Optional[str]=None;baseline_number:Optional[int]=Field(default=None,ge=1);hardware_profile_id:Optional[str]=None;hardware_profile_version:Optional[int]=Field(default=None,ge=1);channel_map_snapshot:Optional[dict]=None;notes:str=Field(default="",max_length=1000)
 class RecordingMarkerRequest(BaseModel):
